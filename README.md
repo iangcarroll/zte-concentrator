@@ -87,6 +87,23 @@ written from the same notes, so a misreading of the protocol would be reproduced
 on both sides and pass anyway. [`docs/STATUS.md`](docs/STATUS.md) says exactly
 what is proven, what is guessed, and what would most likely break first.
 
+## Testing against the real device binary
+
+[`emu/`](emu/) runs the device's actual `zte_icg_agg` in a container against a
+concentrator on your laptop, which is the only way to settle whether this
+implementation is right rather than merely self-consistent.
+
+It works because the binary imports only **six** non-libc symbols — five logging
+calls and a uci get/set — despite linking fifteen libraries. About 150 lines of
+C stand in for the whole ZTE userland. The device is musl aarch64, so on an
+arm64 host it runs natively with no emulation.
+
+```sh
+cp /path/to/zte_icg_agg emu/blobs/ && make -C emu build
+./bin/icgd -tcp :10088 -udp-base 10000 -udp-legs 4 -v   # one terminal
+make -C emu run                                          # the other
+```
+
 ## Layout
 
 ```

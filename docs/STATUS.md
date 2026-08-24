@@ -24,7 +24,46 @@ Last updated 2026-08-24.
 | Observability API + web UI | **done**, `-http` with shared-secret auth |
 | Deployment | **done**, `deploy/`, clean install and update on three distros |
 | Tested against a real server | **done**, over the public internet |
-| **Tested against the real device** | **not done** — this is the gap that matters |
+| Running the real device binary locally | **harness built**, [`../emu/`](../emu/) — see below |
+| **Tested against the real device** | **in progress** — the harness closes this, once run |
+
+## Testing against the real binary
+
+The gap below — that `icg-probe` and the server were written from the same notes
+— can be closed without a device, and [`../emu/`](../emu/) is the harness for
+it: a container that runs the device's actual `zte_icg_agg` against a
+concentrator on your laptop.
+
+It is feasible because of a genuinely lucky property of the binary. It is linked
+against fifteen shared libraries, most of them ZTE proprietary, but it
+**imports only six non-libc symbols**:
+
+```
+dzlog  dzlog_init  zlog_fini  zte_key_syslog_append
+libzte_router_uci_get  libzte_router_uci_set
+```
+
+Five are logging and one pair is a uci get/set. Nothing from `libubus`,
+`libuci`, `libsqlite3`, `libcares`, `libmbedcrypto`, `libzteencrypt`,
+`libztecrypto` or `libztecryptofilewrapper` is called directly — those are
+`libzterouter`'s transitive dependencies, and `libzterouter` is one of the two
+things we replace. So ~150 lines of C stand in for the entire ZTE userland, and
+every other `DT_NEEDED` entry is satisfied with a symlink to that same shim.
+
+Two more things line up: the device is **musl aarch64**, so Alpine's
+`/lib/ld-musl-aarch64.so.1` is the loader the binary already asks for; and on an
+arm64 host the container runs **natively**, no emulation.
+
+Worth noting what that import list also tells us: the data plane genuinely has
+no cryptography. It is not that we found no crypto calls — there is no crypto
+library it could call into, because it imports nothing from any of the four
+crypto libraries it links against.
+
+What the harness settles: whether the real client accepts our handshake, agrees
+on the framing, reaches `ICG_AND_SRV_BOTH_OK`, stays alive, and pushes traffic
+through the proxy. What it cannot settle: throughput and scheduling (all the
+dummy WANs share one physical path, so no leg is really faster than another),
+and anything the stubbed libraries would have done.
 
 ## What is deliberately not implemented
 

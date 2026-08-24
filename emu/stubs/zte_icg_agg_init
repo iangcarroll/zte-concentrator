@@ -1,0 +1,7 @@
+#!/bin/sh
+# Stand-in for the device's init script. zte_icg_agg calls
+# "/etc/init.d/zte_icg_agg_init stop" on itself from its zombie watchdog after
+# 150 s of silence from the concentrator, so seeing this line is a real signal:
+# it means the server stopped answering.
+echo "[stub] zte_icg_agg_init $* — the data plane asked to be stopped" >&2
+exit 0
