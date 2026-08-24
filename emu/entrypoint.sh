@@ -78,6 +78,14 @@ if [ ! -c /dev/net/tun ]; then
   exit 3
 fi
 
+# Blackhole the DNS servers the device probes at startup, so the probe fails
+# immediately rather than waiting on packets that will never come back. The
+# ping wrapper in /usr/local/bin also caps the deadline; this is belt and
+# braces, and it makes the failure instant instead of merely bounded.
+for dns in 223.5.5.5 223.6.6.6 180.76.76.76 114.114.114.114 119.29.29.29; do
+  ip route add blackhole "$dns" 2>/dev/null || true
+done
+
 # Loosen the same sysctls the device's own startup does.
 sysctl -qw net.ipv4.ip_forward=1 2>/dev/null || true
 sysctl -qw net.ipv4.conf.all.rp_filter=0 2>/dev/null || true

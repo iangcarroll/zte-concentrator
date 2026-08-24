@@ -52,6 +52,7 @@ COPY entrypoint.sh /entrypoint.sh
 COPY stubs/ /opt/stubs/
 RUN chmod +x /entrypoint.sh /opt/stubs/* && \
     ln -sf /opt/stubs/icg_agg_fw.sh /sbin/icg_agg_fw.sh && \
+    ln -sf /opt/stubs/ping /usr/local/bin/ping && \
     mkdir -p /etc/init.d && \
     ln -sf /opt/stubs/zte_icg_agg_init /etc/init.d/zte_icg_agg_init && \
     mkdir -p /logfs /var/run

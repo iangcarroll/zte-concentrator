@@ -1,0 +1,12 @@
+#!/bin/sh
+# The device probes six Chinese public DNS servers at startup (223.5.5.5,
+# 223.6.6.6, 180.76.76.76, 114.114.114.114, 119.29.29.29, ...) with
+# system("ping %s -c 1") and no timeout of its own — see get_valid_dns_ip at
+# 0x1c718, which only stops early once three replies come back.
+#
+# Off the device's own network none of them reply, and busybox ping -c 1 has no
+# default deadline, so startup blocks there before a single thread is created.
+# That is what stalled the first three runs of this harness.
+#
+# Force a short deadline. "unreachable" is the honest answer from here anyway.
+exec /bin/busybox ping -W 1 -w 2 "$@"

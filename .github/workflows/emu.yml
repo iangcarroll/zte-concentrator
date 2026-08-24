@@ -233,7 +233,7 @@ jobs:
         env:
           # How long to let it talk to the concentrator. The handshake loop runs
           # at 1 Hz, so this is generous even under QEMU.
-          RUN_FOR: 90
+          RUN_FOR: 150
         run: |
           # Detached, not `timeout docker run`. zte_icg_agg installs a SIGTERM
           # handler ("SIG SIGTERM received!") and does not necessarily exit on
@@ -267,6 +267,15 @@ jobs:
             fi
             sleep 1
           done
+
+          # If it did not get up, capture what it was doing. Three runs were
+          # spent guessing at a stall that a process list would have named.
+          if ! docker logs icgdev 2>&1 | grep -q 'ICG_AND_SRV_BOTH_OK'; then
+            echo "=========== it did not come up; what is it doing? ==========="
+            docker exec icgdev sh -c 'ps -o pid,stat,args 2>/dev/null || ps' || true
+            docker exec icgdev sh -c 'ls /proc/*/task 2>/dev/null | head -20' || true
+            docker exec icgdev sh -c 'ip -brief addr; ip rule show 2>&1 | head' || true
+          fi
 
           docker logs icgdev > /tmp/device.log 2>&1
           docker rm -f icgdev >/dev/null 2>&1 || true
