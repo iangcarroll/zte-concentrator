@@ -10,16 +10,31 @@ name: emu
 #
 # The proprietary binary is never in the image. Mount it at run time.
 
+# The path filter covers the concentrator as well as the harness, not just
+# emu/**: emu/e2e.sh builds icgd from source and runs the real device against
+# it, so a change under icg/ can break the device test. Filtering on emu/**
+# alone would let that through unnoticed, which defeats the point of having a
+# continuous test against the real binary.
 on:
   push:
     branches: [main]
     paths:
+      # Duplicated below rather than aliased: GitHub Actions does not support
+      # YAML anchors. Keep the two lists in step.
       - 'emu/**'
+      - 'icg/**'
+      - 'cmd/icgd/**'
+      - 'go.mod'
+      - 'go.sum'
       - '.github/workflows/emu.yml'
   pull_request:
     paths:
       - 'emu/**'
-      - '.github/workflows/emu.yml'
+      - 'icg/**'
+      - 'cmd/icgd/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/emu.yml' 
   workflow_dispatch:
 
 env:
