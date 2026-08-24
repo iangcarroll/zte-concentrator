@@ -1,0 +1,5 @@
+bin/
+
+# Packet captures: these contain real device and operator traffic.
+*.pcap
+*.pcapng
