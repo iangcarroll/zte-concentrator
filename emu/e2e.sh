@@ -49,6 +49,24 @@ api() {
   docker run --rm --network "$NET" alpine:3.20 \
     wget -q -O - --header="X-Icgd-Key: $API_KEY" "http://$SRV_IP:$API_PORT/api/status" 2>/dev/null
 }
+# await_metric <key> <minimum> — poll the API until a counter reaches a value.
+#
+# Session snapshots are published by the session's own goroutine every 500 ms,
+# so they are eventually consistent: a single read taken right after a fetch can
+# legitimately still show the previous snapshot. Reading once made this test
+# flaky. Polling is the right fix, not a longer sleep.
+await_metric() {
+  _key=$1; _min=$2; _got=0
+  _i=0
+  while [ "$_i" -lt 20 ]; do
+    state=$(api)
+    _got=$(jget "$state" "$_key")
+    [ "${_got:-0}" -ge "$_min" ] && return 0
+    _i=$((_i + 1))
+  done
+  return 1
+}
+
 # jget <json> <key> — pull one numeric field out without a jq dependency.
 # Prints 0 for anything that is not a plain integer, so callers can use [ -ge ]
 # without set -e killing the run on a surprise.
@@ -172,17 +190,18 @@ fi
 # The fetch succeeding is necessary but not sufficient evidence: assert the
 # concentrator's own counters, so a response that somehow arrived by another
 # path could not pass this test.
-state=$(api)
+if await_metric tcp_total 1; then
+  pass "concentrator proxied $(jget "$state" tcp_total) TCP flow(s)"
+else
+  fail "concentrator proxied no TCP flows — the response did not come through the tunnel"
+  printf '  api said: %s\n' "$(printf '%s' "$state" | tr -d '\n ' | head -c 400)"
+fi
 if [ -z "$state" ]; then
   fail "could not read the concentrator API"
 else
-  total=$(jget "$state" tcp_total)
   skipped=$(jget "$state" tcp_skipped)
   late=$(jget "$state" tcp_late)
   refused=$(jget "$state" refused)
-  if [ "${total:-0}" -ge 1 ]; then
-    pass "concentrator proxied $total TCP flow(s)"
-  else fail "concentrator proxied no TCP flows — the response did not come through the tunnel"; fi
   if [ "${skipped:-0}" = 0 ]; then
     pass "no reassembly gaps were skipped"
   else fail "reassembler skipped $skipped sequence(s) — data was lost"; fi
@@ -218,10 +237,8 @@ if [ "$failed" = 0 ] && [ "${SOAK:-0}" -gt 0 ]; then
     pass "a second fetch still works after ${SOAK}s idle"
   else fail "the tunnel stopped carrying traffic after ${SOAK}s idle"; fi
 
-  state=$(api)
-  total=$(jget "$state" tcp_total)
-  if [ "${total:-0}" -ge 2 ]; then
-    pass "concentrator proxied $total flows in total"
+  if await_metric tcp_total 2; then
+    pass "concentrator proxied $(jget "$state" tcp_total) flows in total"
   else fail "the second flow never reached the concentrator"; fi
 fi
 

@@ -3,3 +3,9 @@ bin/
 # Packet captures: these contain real device and operator traffic.
 *.pcap
 *.pcapng
+
+# The blob decryption key. Ignored by name anywhere in the tree, not just by
+# emu/blobs/.gitignore's catch-all, so a copy left in another directory cannot
+# be committed either. The canonical location is emu/blobs/icg_blob_key.
+icg_blob_key
+*.key

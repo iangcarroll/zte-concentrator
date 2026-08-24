@@ -1,6 +1,13 @@
 IMAGE  ?= zte-emu
 BLOB   ?= blobs/zte_icg_agg
 
+# Where the decryption key lives locally. Gitignored twice over (by
+# blobs/.gitignore's catch-all and by name in the root .gitignore). If it is
+# present, encrypt/decrypt use it, so there is no need to keep a copy in /tmp
+# or to paste the key into a shell. $ICG_BLOB_KEY still wins if set, which is
+# how CI supplies it.
+KEYFILE ?= blobs/icg_blob_key
+
 # The concentrator as seen from inside the container. 172.17.0.1 is the default
 # bridge gateway on Linux; Docker Desktop also resolves host.docker.internal.
 SERVER_IP ?= 172.17.0.1
@@ -50,19 +57,38 @@ contract:
 # --- the encrypted blob -----------------------------------------------------
 # The binary is ZTE's, so the repo holds only ciphertext; the key lives in the
 # ICG_BLOB_KEY Actions secret and in your password manager. See README.
-CRYPT = go run ../emu/blobcrypt
+# Recipes cd to the repo root first (the module root), so this path is
+# relative to there, not to emu/.
+CRYPT = go run ./emu/blobcrypt
 
 keygen:
 	@cd .. && $(CRYPT) -keygen
 
+# Both targets take the key from $ICG_BLOB_KEY if it is set, otherwise from
+# $(KEYFILE) on stdin, otherwise blobcrypt prompts. Piping the file avoids
+# putting the key in the environment or in shell history.
 encrypt:
 	@test -f $(BLOB) || { echo "no plaintext at $(BLOB)"; exit 2; }
-	cd .. && $(CRYPT) -e -in emu/$(BLOB) -out emu/$(BLOB).enc
+	@cd .. && if [ -n "$$ICG_BLOB_KEY" ]; then \
+		$(CRYPT) -e -in emu/$(BLOB) -out emu/$(BLOB).enc; \
+	elif [ -f emu/$(KEYFILE) ]; then \
+		$(CRYPT) -e -in emu/$(BLOB) -out emu/$(BLOB).enc < emu/$(KEYFILE); \
+	else \
+		$(CRYPT) -e -in emu/$(BLOB) -out emu/$(BLOB).enc; \
+	fi
 	@echo "wrote $(BLOB).enc — commit that, never $(BLOB)"
 
 decrypt:
 	@test -f $(BLOB).enc || { echo "no $(BLOB).enc to decrypt"; exit 2; }
-	cd .. && $(CRYPT) -d -in emu/$(BLOB).enc -out emu/$(BLOB)
+	@cd .. && if [ -n "$$ICG_BLOB_KEY" ]; then \
+		$(CRYPT) -d -in emu/$(BLOB).enc -out emu/$(BLOB); \
+	elif [ -f emu/$(KEYFILE) ]; then \
+		$(CRYPT) -d -in emu/$(BLOB).enc -out emu/$(BLOB) < emu/$(KEYFILE); \
+	else \
+		echo "no $$ICG_BLOB_KEY and no $(KEYFILE); blobcrypt will ask"; \
+		$(CRYPT) -d -in emu/$(BLOB).enc -out emu/$(BLOB); \
+	fi
+	@chmod 700 $(BLOB)
 	@echo "wrote $(BLOB) (gitignored)"
 
 clean:

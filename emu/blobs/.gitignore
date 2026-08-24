@@ -4,3 +4,7 @@
 !.gitignore
 !.gitkeep
 !*.enc
+
+# Note: this catch-all is also what keeps icg_blob_key (the decryption key for
+# the .enc above) out of git. The root .gitignore ignores that name explicitly
+# as well. Do NOT add an exception that could match it.

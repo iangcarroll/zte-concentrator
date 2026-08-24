@@ -43,7 +43,16 @@ r2 -q -c ii /path/to/zte_icg_agg | grep -vE 'libc|GLIBC'
 `zte_icg_agg` is ZTE's. Committing it — even to a private repo — means the
 repository distributes it, and a private repo can be made public by accident. So
 the repo holds only `blobs/zte_icg_agg.enc`: AES-256-GCM, key in the
-`ICG_BLOB_KEY` Actions secret and in your password manager, nowhere else.
+`ICG_BLOB_KEY` Actions secret, in your password manager, and — for local use
+only — in `blobs/icg_blob_key`.
+
+That last file is **gitignored twice over**: by `blobs/.gitignore`'s catch-all,
+and by name in the repo's root `.gitignore` so a copy left anywhere else in the
+tree cannot be committed either. `make decrypt` and `make encrypt` pipe it in on
+stdin when `$ICG_BLOB_KEY` is unset, which keeps the key out of your environment
+and out of shell history. It is mode `600`; keep it that way, and keep the
+authoritative copy in your password manager — this one is a convenience, not a
+backup.
 
 That is not security theatre for its own sake. It is what lets CI run the real
 binary: the runner decrypts into its own filesystem, uses it, and throws it
@@ -53,7 +62,7 @@ Set it up once:
 
 ```sh
 make -C emu keygen                 # a 43-char random key; save it somewhere real
-export ICG_BLOB_KEY=<that key>
+umask 077 && printf '%s' '<that key>' > emu/blobs/icg_blob_key   # gitignored
 cp /path/to/zte_icg_agg emu/blobs/
 make -C emu encrypt                # writes blobs/zte_icg_agg.enc
 git add emu/blobs/zte_icg_agg.enc  # the plaintext is gitignored and CI rejects it
