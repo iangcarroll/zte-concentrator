@@ -27,6 +27,9 @@ networking.
 
 ---
 
+Pointing a device at the concentrator you deploy here is a separate procedure:
+see [`DEVICE-SETUP.md`](DEVICE-SETUP.md).
+
 ## Deploy
 
 `deploy/icgd-deploy.sh` builds locally, uploads, and installs over ssh. It

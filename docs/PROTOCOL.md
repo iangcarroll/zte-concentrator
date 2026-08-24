@@ -8,13 +8,12 @@ live capture; this repo implements it.
 Read [`STATUS.md`](STATUS.md) for what is trustworthy and what is not, and
 [`OPERATING.md`](OPERATING.md) to run a concentrator.
 
-The device-side reverse engineering — how the feature is gated, the firmware
-blobs, the disassembly tooling, and the MQTT control plane — lives in the
-private `iangcarroll/zte` repo under `research/`. Addresses cited below are
-offsets into `zte_icg_agg` from that repo's `research/firmware/icg/`.
+Addresses cited below are offsets into the device's own `/usr/bin/zte_icg_agg`.
+Pull your own copy off a device to follow along; the binary is ZTE's and is not
+redistributed here.
 
 Target: `/usr/bin/zte_icg_agg` `2.2.2.0(932e8c3) Aug 8 2026`, MU5252
-`EN_CN_MU5252V1.0.0B20`. sha256 recorded in the `zte` repo's `research/firmware/icg/MANIFEST.txt`.
+`EN_CN_MU5252V1.0.0B20`.
 
 Every claim below is tagged:
 

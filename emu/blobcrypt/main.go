@@ -4,8 +4,8 @@
 // The point is narrow and worth stating: `emu/` needs the device's real
 // zte_icg_agg to be useful, and CI needs it to prove the concentrator works
 // against the real client rather than against a client written from the same
-// notes. But committing ZTE's binary — even to a private repo — means the
-// repository distributes it, and a private repo can be made public by accident.
+// notes. But committing ZTE's binary would mean the
+// repository distributes it, which is not ours to do.
 // Encrypting it means the repository holds ciphertext, the key lives only in a
 // GitHub Actions secret, and the plaintext exists only in a runner's memory and
 // on machines that already had it.

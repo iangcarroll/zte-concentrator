@@ -40,8 +40,8 @@ r2 -q -c ii /path/to/zte_icg_agg | grep -vE 'libc|GLIBC'
 
 ## The binary, and why it is encrypted
 
-`zte_icg_agg` is ZTE's. Committing it — even to a private repo — means the
-repository distributes it, and a private repo can be made public by accident. So
+`zte_icg_agg` is ZTE's. Committing it would mean the
+repository distributes it, which is not ours to do. So
 the repo holds only `blobs/zte_icg_agg.enc`: AES-256-GCM, key in the
 `ICG_BLOB_KEY` Actions secret, in your password manager, and — for local use
 only — in `blobs/icg_blob_key`.

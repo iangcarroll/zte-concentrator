@@ -22,7 +22,7 @@ is documented in [`docs/PROTOCOL.md`](docs/PROTOCOL.md), which tags every claim
 ## ⚠️ This repo was written by an AI
 
 Every line of code, every document and every commit message here was produced by
-Claude (Anthropic) working from the reverse-engineered protocol, under human
+an AI coding assistant working from the reverse-engineered protocol, under human
 direction and review. That has two consequences worth stating plainly:
 
 - **Treat it as unreviewed by a human expert until you have reviewed it.** It
@@ -141,8 +141,8 @@ wrong TunnelIdentifier: the peer sent magic 0xdeadbeef, we expect 0x12345678
   fix:  set icg.conf TunnelIdentifier=12345678 on the device, or restart icgd with -magic deadbeef
 ```
 
-## Related
+## Configuring a device
 
-The device-side reverse engineering — how the feature is gated (one GPIO pin),
-the firmware blobs, the disassembly tooling, the MQTT control plane, and the
-rest of the CPE fleet management — lives in the private `iangcarroll/zte` repo.
+[`docs/DEVICE-SETUP.md`](docs/DEVICE-SETUP.md) is a complete manual walkthrough:
+what to change in the device's `icg.conf`, how to publish it on a read-only
+rootfs, which MAC to allowlist, and how the feature is gated.
