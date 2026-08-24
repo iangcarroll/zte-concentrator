@@ -221,18 +221,44 @@ jobs:
 
       - name: run the DEVICE'S OWN binary against it
         if: steps.blob.outputs.have == 'yes'
+        env:
+          # How long to let it talk to the concentrator. The handshake loop runs
+          # at 1 Hz, so this is generous even under QEMU.
+          RUN_FOR: 90
         run: |
-          # QEMU-emulated aarch64 and a heavily threaded binary: give it room.
+          # Detached, not `timeout docker run`. zte_icg_agg installs a SIGTERM
+          # handler ("SIG SIGTERM received!") and does not necessarily exit on
+          # it, so a foreground run outlives its timeout and hangs the job —
+          # which is exactly what happened the first time. Starting it detached
+          # and tearing it down with `docker rm -f` cannot hang.
+          #
           # NET_ADMIN for tun0 and the dummy links, NET_RAW for the iptables
           # rules the transparent proxy installs.
-          timeout 180 docker run --rm --platform linux/arm64 \
+          docker run -d --name icgdev --platform linux/arm64 \
             --cap-add NET_ADMIN --cap-add NET_RAW \
             --device /dev/net/tun \
             -e SERVER_IP=172.17.0.1 -e TCP_PORT=10088 -e UDP_BASE=10000 \
             -v "$PWD/emu/blobs/zte_icg_agg:/opt/icg/zte_icg_agg:ro" \
-            emu:test > /tmp/device.log 2>&1 || true
+            emu:test
+
+          # Stop early once the device says it is up, so a passing run is quick
+          # and a failing one still gets the full window to prove it.
+          for i in $(seq 1 "$RUN_FOR"); do
+            if docker logs icgdev 2>&1 | grep -q 'ICG_AND_SRV_BOTH_OK'; then
+              echo "device reported ICG_AND_SRV_BOTH_OK after ${i}s"
+              break
+            fi
+            if ! docker inspect -f '{{.State.Running}}' icgdev 2>/dev/null | grep -q true; then
+              echo "the container exited after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          docker logs icgdev > /tmp/device.log 2>&1
+          docker rm -f icgdev >/dev/null 2>&1 || true
           echo "=========== the device's own log ==========="
-          tail -80 /tmp/device.log
+          tail -100 /tmp/device.log
 
       - name: the device must reach ICG_AND_SRV_BOTH_OK
         if: steps.blob.outputs.have == 'yes'
@@ -272,4 +298,5 @@ jobs:
       - name: logs
         if: always() && steps.blob.outputs.have == 'yes'
         run: |
+          docker rm -f icgdev >/dev/null 2>&1 || true
           echo "=== concentrator ==="; tail -80 /tmp/icgd.log || true
