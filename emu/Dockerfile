@@ -8,7 +8,7 @@
 # The proprietary binary is NOT baked in. Mount it at /opt/icg/zte_icg_agg.
 
 FROM alpine:3.20 AS build
-RUN apk add --no-cache build-base
+RUN apk add --no-cache gcc musl-dev
 COPY shim.c /src/shim.c
 RUN gcc -shared -fPIC -O2 -o /libzteshim.so /src/shim.c
 
@@ -26,7 +26,10 @@ FROM alpine:3.20
 #     network access if you need the proxy path.
 # This keeps the image buildable on a bad link, which is the situation it was
 # written in.
-ARG EXTRA_PKGS=""
+# binutils gives us nm, which CI uses to assert the shim still covers every
+# symbol the binary imports. EXTRA_PKGS is for anything else you want (iptables
+# for the transparent-proxy path, iproute2 for richer `ip` support).
+ARG EXTRA_PKGS="binutils"
 RUN if [ -n "$EXTRA_PKGS" ]; then apk add --no-cache $EXTRA_PKGS; fi
 
 COPY --from=build /libzteshim.so /usr/lib/libzteshim.so

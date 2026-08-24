@@ -7,10 +7,18 @@ SERVER_IP ?= 172.17.0.1
 TCP_PORT  ?= 10088
 UDP_BASE  ?= 10000
 
-.PHONY: build run shell imports clean
+IMAGE_REMOTE ?= ghcr.io/iangcarroll/zte-coord/emu:main
+
+.PHONY: build pull run shell imports contract clean
 
 build:
 	docker build --platform linux/arm64 -t $(IMAGE) .
+
+# Prefer this to `build`: CI has already built it, and building locally means
+# installing a compiler into an aarch64 image, which is slow on a bad link.
+pull:
+	docker pull --platform linux/arm64 $(IMAGE_REMOTE)
+	docker tag $(IMAGE_REMOTE) $(IMAGE)
 
 # NET_ADMIN for the dummy links and iptables; /dev/net/tun for the UDP/ICMP path.
 run:
@@ -34,6 +42,10 @@ shell:
 imports:
 	@test -f $(BLOB) || { echo "put zte_icg_agg in $(BLOB) first"; exit 2; }
 	r2 -q -c ii $(BLOB) | awk '{print $$NF}' | sort -u
+
+# Regenerate the CI contract from the real binary.
+contract:
+	./refresh-contract.sh $(BLOB)
 
 clean:
 	docker rmi $(IMAGE) 2>/dev/null || true

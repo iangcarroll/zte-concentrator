@@ -1,0 +1,18 @@
+# Every DT_NEEDED name in zte_icg_agg that needs a file to exist.
+# libc.so is deliberately absent: musl's loader resolves it to itself
+# ("libc.so => /lib/ld-musl-aarch64.so.1"), so there is nothing to stub.
+# Regenerate with ./refresh-contract.sh
+libzlog.so.1.2
+libzterouter.so
+libubus.so.20230605
+libuci.so
+libjson-c.so.5
+libsqlite3.so.0
+libztelog.so
+libzteescape.so
+libzteencrypt.so
+libmbedcrypto.so.16
+libztecrypto.so
+libztecryptofilewrapper.so
+libcares.so.2
+libgcc_s.so.1

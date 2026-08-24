@@ -1,0 +1,109 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "not gofmt'd:"; echo "$out"; exit 1; fi
+
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test -race ./...
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          bash -n deploy/icgd-deploy.sh
+          sh   -n deploy/icgd-install.sh
+          sh   -n emu/entrypoint.sh
+          shellcheck -S warning deploy/icgd-deploy.sh
+          shellcheck -s sh deploy/icgd-install.sh emu/entrypoint.sh emu/stubs/*
+
+  # The concentrator and the probe, end to end, over the runner's real network.
+  # This is the same check that runs against a deployed server, so a regression
+  # in the handshake, the proxy or reassembly fails the build.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: make icgd icg-probe
+
+      - name: run the concentrator
+        run: |
+          ./bin/icgd -tcp 127.0.0.1:10088 -udp-base 10000 -udp-legs 2 \
+                     -devices 02:00:5e:10:00:01 -stats 0 -http 127.0.0.1:10099 \
+                     > /tmp/icgd.log 2>&1 &
+          for i in $(seq 1 50); do
+            ss -lnt 2>/dev/null | grep -q ':10088' && break
+            sleep 0.2
+          done
+          ss -lntu | grep -E ':1008[0-9]|:1000[0-9]' || { cat /tmp/icgd.log; exit 1; }
+
+      - name: probe it with an allowed device
+        run: |
+          ./bin/icg-probe -server 127.0.0.1:10088 -udp 127.0.0.1:10000 \
+            -udp-legs 2 -legs 3 -mac 02:00:5e:10:00:01 \
+            -fetch http://example.com/ -timeout 60s
+
+      - name: an unlisted device must be refused
+        run: |
+          # The probe should FAIL here: no handshake ack for an unknown MAC.
+          if ./bin/icg-probe -server 127.0.0.1:10088 -legs 1 \
+               -mac de:ad:be:ef:99:99 -tun-ip 172.16.99.1 -timeout 8s; then
+            echo "::error::an unlisted device was admitted"
+            exit 1
+          fi
+          echo "refused, as it should be"
+
+      - name: the observability API must require its key
+        run: |
+          key=$(grep -o 'key=[A-Za-z0-9_-]\{20,\}' /tmp/icgd.log | head -1 | cut -d= -f2)
+          test -n "$key" || { echo "::error::no API key was logged"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:10099/api/status)
+          test "$code" = 401 || { echo "::error::unauthenticated request got $code"; exit 1; }
+          curl -sf -H "X-Icgd-Key: $key" http://127.0.0.1:10099/api/status > /tmp/status.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/status.json'))
+          assert d['admission']['enabled'], d['admission']
+          # Two sessions exist by now: the admitted probe and the refused one.
+          # Find the admitted one rather than relying on ordering.
+          ok = [s for s in d['sessions'] if s['tun_ip'] == '172.16.25.18']
+          assert ok, [s['tun_ip'] for s in d['sessions']]
+          s = ok[0]
+          assert s['state'] == 'ICG_AND_SRV_BOTH_OK', s['state']
+          assert s['admitted'], s
+          assert s['reassembly']['tcp_skipped'] == 0, s['reassembly']
+          assert s['reassembly']['tcp_late'] == 0, s['reassembly']
+          refused = [s for s in d['sessions'] if not s['admitted']]
+          assert refused, 'the refused device left no trace'
+          print('ok:', s['tun_ip'], s['state'], '| refused:', [r['tun_ip'] for r in refused])
+          PY
+
+      - name: concentrator log
+        if: always()
+        run: tail -60 /tmp/icgd.log

@@ -44,7 +44,7 @@ device (`adb pull /usr/bin/zte_icg_agg`) or from the private `zte` repo's
 
 ```sh
 cp /path/to/zte_icg_agg blobs/
-make build
+make pull            # CI already built it; this is much faster than `make build`
 
 # In one terminal: the concentrator. --http on all interfaces so the container
 # can be pointed at the host.
@@ -102,11 +102,22 @@ $ docker run --rm --platform linux/arm64 -v ./zte_icg_agg:/x/a:ro alpine:3.20   
 Fourteen missing files, but only four unresolved *symbols* — the rest resolve
 once the shim is in place.
 
-**Not yet verified:** the container has not been built to completion, and so the
-harness has never actually been run. It was written on an in-flight connection
-too degraded for `apk` to install a compiler. Treat everything below the import
-analysis as designed-but-unexercised until someone runs `make build && make run`
-on a working link.
+**Built in CI:** `.github/workflows/emu.yml` builds the image on every change,
+asserts that the shim still exports every symbol the binary imports and that
+every `DT_NEEDED` name has a file, checks the entrypoint reaches its exec, and
+publishes to `ghcr.io/iangcarroll/zte-coord/emu:main`. `make pull` fetches that
+instead of building locally — which matters, because building means installing a
+compiler into an aarch64 image and that is slow or impossible on a poor link.
+
+The two contract files (`etc/expected-imports.txt`, `etc/expected-libs.txt`) are
+what CI asserts against, and `./refresh-contract.sh /path/to/zte_icg_agg`
+regenerates them from the binary so they cannot drift from it silently.
+
+**Not yet verified:** the harness has never been *run* against the real binary
+end to end — CI cannot, because the blob is not in the repo, and the connection
+this was written on could not build the image locally. Treat the runtime
+behaviour as designed-but-unexercised until someone does
+`make pull && make run` and sees `ICG_AND_SRV_BOTH_OK`.
 
 ## What this does and does not prove
 
