@@ -149,7 +149,20 @@ jobs:
   real-device:
     needs: build
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    # A NATIVE arm64 runner, not x86 + QEMU. The first attempt ran under
+    # qemu-user and the binary itself worked fine — config, hardware detection,
+    # logging, tun0 — but every netlink operation failed:
+    #
+    #   iptables: Failed to initialize nft: Protocol not supported
+    #   Cannot talk to rtnetlink: Not supported
+    #   Error: ipv4: FIB table does not exist.
+    #
+    # qemu-user does not translate rtnetlink faithfully. The device installs
+    # per-WAN policy routing before it opens a tunnel, so with `ip rule` failing
+    # it never opened one, never handshook, and the concentrator sat on "no
+    # sessions" for the whole window. Not a protocol problem — an emulation
+    # fidelity problem, and the fix is to stop emulating.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -184,10 +197,6 @@ jobs:
             || { echo "::error::the decrypted blob is not an aarch64 ELF"; exit 1; }
           echo "decrypted $(stat -c%s emu/blobs/zte_icg_agg) bytes"
 
-      - uses: docker/setup-qemu-action@v3
-        if: steps.blob.outputs.have == 'yes'
-        with:
-          platforms: arm64
       - uses: docker/setup-buildx-action@v3
         if: steps.blob.outputs.have == 'yes'
 
@@ -234,8 +243,12 @@ jobs:
           #
           # NET_ADMIN for tun0 and the dummy links, NET_RAW for the iptables
           # rules the transparent proxy installs.
+          # --privileged because the device's startup writes sysctls, installs
+          # iptables rules and adds policy-routing tables. It is in its own
+          # network namespace, so this is contained; NET_ADMIN alone is not
+          # enough for the /proc/sys writes it performs.
           docker run -d --name icgdev --platform linux/arm64 \
-            --cap-add NET_ADMIN --cap-add NET_RAW \
+            --privileged \
             --device /dev/net/tun \
             -e SERVER_IP=172.17.0.1 -e TCP_PORT=10088 -e UDP_BASE=10000 \
             -v "$PWD/emu/blobs/zte_icg_agg:/opt/icg/zte_icg_agg:ro" \
