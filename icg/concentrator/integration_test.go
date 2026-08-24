@@ -21,7 +21,7 @@ import (
 // only way to exercise the parts that no capture covers — the handshake, the
 // proxy, striping across legs, and retransmission.
 
-const testTunIP = 0x1219_10ac // 172.16.25.18 in the byte order the client sends
+const testIcgID = 0x1219_10ac // 172.16.25.18 in the byte order the client sends
 
 func testLogger(t *testing.T) *slog.Logger {
 	lvl := slog.LevelWarn
@@ -118,7 +118,7 @@ func (l *leg) send(f *icg.Frame) {
 	l.t.Helper()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	f.IcgID = testTunIP
+	f.IcgID = testIcgID
 	if _, err := l.conn.Write(f.Encode()); err != nil {
 		l.t.Fatalf("leg write: %v", err)
 	}
@@ -188,8 +188,8 @@ func (l *leg) handshake() {
 	if len(ack.Body) != 0 {
 		l.t.Errorf("ICG_SERVER_HANDSHAKE_ACK carried %d body bytes; the client ignores them", len(ack.Body))
 	}
-	if ack.IcgID != testTunIP {
-		l.t.Errorf("server echoed tun_ip %#x, want %#x", ack.IcgID, uint32(testTunIP))
+	if ack.IcgID != testIcgID {
+		l.t.Errorf("server echoed icg_id %#x, want %#x", ack.IcgID, uint32(testIcgID))
 	}
 
 	l.send(&icg.Frame{Type: icg.TypeHandshake, Opcode: icg.HSConfirmAck, Body: fakePing(3)})
@@ -480,7 +480,7 @@ func TestStripedOutOfOrderDeliversInOrder(t *testing.T) {
 	legA.handshake()
 	legB := h.dialTCPLeg()
 	// A second leg does not re-handshake; it just starts carrying frames with
-	// the same tun_ip, which is exactly what the client does per WAN.
+	// the same icg_id, which is exactly what the client does per WAN.
 	legB.send(&icg.Frame{Type: icg.TypeHandshake, Opcode: icg.HSKeepalive, Body: fakePing(2)})
 
 	flow := icg.Flow{

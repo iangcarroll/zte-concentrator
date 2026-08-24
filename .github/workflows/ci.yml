@@ -92,8 +92,8 @@ jobs:
           assert d['admission']['enabled'], d['admission']
           # Two sessions exist by now: the admitted probe and the refused one.
           # Find the admitted one rather than relying on ordering.
-          ok = [s for s in d['sessions'] if s['tun_ip'] == '172.16.25.18']
-          assert ok, [s['tun_ip'] for s in d['sessions']]
+          ok = [s for s in d['sessions'] if s['icg_id'] == '172.16.25.18']
+          assert ok, [s['icg_id'] for s in d['sessions']]
           s = ok[0]
           assert s['state'] == 'ICG_AND_SRV_BOTH_OK', s['state']
           assert s['admitted'], s
@@ -101,7 +101,7 @@ jobs:
           assert s['reassembly']['tcp_late'] == 0, s['reassembly']
           refused = [s for s in d['sessions'] if not s['admitted']]
           assert refused, 'the refused device left no trace'
-          print('ok:', s['tun_ip'], s['state'], '| refused:', [r['tun_ip'] for r in refused])
+          print('ok:', s['icg_id'], s['state'], '| refused:', [r['icg_id'] for r in refused])
           PY
 
       - name: concentrator log

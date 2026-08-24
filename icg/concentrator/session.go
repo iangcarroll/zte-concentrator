@@ -22,7 +22,7 @@ import (
 // out channel. Nothing else reaches inside. That is what makes the sequence
 // counters and the reassemblers correct without a lock around each of them.
 //
-// The session key is the tun_ip in the frame header. ZTE's dispatch hands each
+// The session key is the icg_id in the frame header. ZTE's dispatch hands each
 // device its own tun pair — the concentrator side (the value in the header) and
 // the client side, one above it — so that value identifies the device. When we
 // run our own concentrator we choose the allocation ourselves.
@@ -726,7 +726,7 @@ func macString(m net.HardwareAddr) string {
 }
 
 // Leg is one transport path to the CPE — one WAN. A CPE opens a TCP connection
-// per WAN and a UDP flow per WAN, all carrying the same tun_ip.
+// per WAN and a UDP flow per WAN, all carrying the same icg_id.
 type Leg struct {
 	Key      legKey
 	Kind     string // "tcp" | "udp"
