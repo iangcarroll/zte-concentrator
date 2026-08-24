@@ -13,7 +13,7 @@
 //
 //	CPE                                    concentrator
 //	 WAN0 --- TCP ---> :10088 ------\
-//	 WAN1 --- TCP ---> :10088 -------> Session (keyed by tun_ip)
+//	 WAN1 --- TCP ---> :10088 -------> Session (keyed by icg_id)
 //	 WAN0 --- UDP ---> :10000 ------/     |
 //	 WAN1 --- UDP ---> :10001 -----/      +-- global TCP seq space (reassembled)
 //	                                      +-- global UDP seq space (reassembled)
@@ -318,7 +318,7 @@ func (s *Server) acceptTCP(ln net.Listener) error {
 // serveTCPConn deframes one WAN leg's TCP tunnel.
 //
 // A leg belongs to a session, but we do not know which until the first frame
-// arrives and tells us its tun_ip — so the leg is registered lazily and moved
+// arrives and tells us its icg_id — so the leg is registered lazily and moved
 // nowhere afterwards. A CPE with three WANs produces three of these.
 func (s *Server) serveTCPConn(conn net.Conn) {
 	defer conn.Close()
@@ -400,9 +400,9 @@ func (s *Server) serveTCPConn(conn net.Conn) {
 			return
 		}
 		if sess == nil {
-			sess = s.session(f.TunIP)
+			sess = s.session(f.IcgID)
 			sess.attachLeg(leg)
-			log = log.With("tun_ip", tunIPString(f.TunIP))
+			log = log.With("icg_id", icgIDString(f.IcgID))
 			log.Info("leg bound to session")
 		}
 		sess.post(f, leg)
@@ -471,12 +471,12 @@ func (s *Server) serveUDP(idx int, uc *net.UDPConn) {
 					_, werr := uc.WriteToUDP(b, dst)
 					return werr
 				}
-				sess := s.session(f.TunIP)
+				sess := s.session(f.IcgID)
 				sess.attachLeg(leg)
 				pl = &peerLeg{leg: leg, sess: sess}
 				peers[key] = pl
 				log.Info("udp leg bound to session", "from", key,
-					"tun_ip", tunIPString(f.TunIP))
+					"icg_id", icgIDString(f.IcgID))
 			}
 			pl.sess.post(f, pl.leg)
 		}
@@ -514,7 +514,7 @@ func (s *Server) reportBadDatagram(log *slog.Logger, addr *net.UDPAddr, b []byte
 		"unparseable UDP datagram, %d bytes, head % x (%v)", len(b), b[:min(16, len(b))], err)
 }
 
-// session returns the session for a tun_ip, creating and starting it if needed.
+// session returns the session for an icg_id, creating and starting it if needed.
 func (s *Server) session(tunIP uint32) *Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()

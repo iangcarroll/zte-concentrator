@@ -40,7 +40,7 @@ func main() {
 		tcpLegs  = flag.Int("legs", 2, "TCP tunnel legs to open, i.e. how many WANs to pretend to have")
 		udpLegs  = flag.Int("udp-legs", 2, "UDP tunnel legs to open")
 		magicStr = flag.String("magic", fmt.Sprintf("%x", icg.DefaultMagic), "TunnelIdentifier, hex")
-		tunIP    = flag.String("tun-ip", "172.16.25.18", "AggregationServerTunIP — the session key")
+		icgID    = flag.String("icg-id", "172.16.25.18", "AggregationServerIcgId, as a dotted quad — the session key")
 		clientIP = flag.String("client-tun-ip", "172.16.25.19", "the device's own tun0 address")
 		mac      = flag.String("mac", "02:00:5e:10:00:01", "device MAC, the identity the handshake carries")
 		fetch    = flag.String("fetch", "", "fetch this http:// URL through the tunnel to prove the data path")
@@ -76,7 +76,7 @@ func main() {
 		UDPAddr:     *udpAddr,
 		TCPLegs:     *tcpLegs,
 		UDPLegs:     *udpLegs,
-		TunIP:       netip.MustParseAddr(*tunIP),
+		IcgID:       netip.MustParseAddr(*icgID),
 		ClientTunIP: netip.MustParseAddr(*clientIP),
 		MAC:         hw,
 		Magic:       magic,
@@ -87,7 +87,7 @@ func main() {
 	if *udpAddr != "" {
 		fmt.Printf(" (+udp %s x%d)", *udpAddr, *udpLegs)
 	}
-	fmt.Printf("  tcp legs=%d  tun_ip=%s  magic=%#x\n\n", *tcpLegs, *tunIP, magic)
+	fmt.Printf("  tcp legs=%d  icg_id=%s  magic=%#x\n\n", *tcpLegs, *icgID, magic)
 
 	c := client.New(cfg)
 	if err := c.Dial(); err != nil {

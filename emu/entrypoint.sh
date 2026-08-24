@@ -15,6 +15,21 @@ TRACE=${TRACE:-0}
 
 say() { printf '\033[36m[emu]\033[0m %s\n' "$*"; }
 
+# CIDR prefix length -> dotted-quad netmask, for the lease file.
+ipmask() {
+  p=${1:-24}
+  i=0; out=""
+  while [ "$i" -lt 4 ]; do
+    if [ "$p" -ge 8 ]; then o=255; p=$((p - 8))
+    elif [ "$p" -gt 0 ]; then o=$((256 - (1 << (8 - p)))); p=0
+    else o=0
+    fi
+    out="${out}${out:+.}$o"
+    i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+
 [ -x "$AGG" ] || {
   echo "no zte_icg_agg at $AGG — mount it, e.g." >&2
   echo "  docker run -v /path/to/zte_icg_agg:/opt/icg/zte_icg_agg:ro ..." >&2
@@ -66,10 +81,43 @@ for w in $WANS; do
     ip link set "${w}p" up 2>/dev/null || true
     ip link set "$w" up
     gw="10.90.$n.1"
+    ip="10.90.$n.2/24"
     say "wan $w = 10.90.$n.2/24 via $gw (veth, no real path)"
   fi
-  # The device learns each WAN's gateway from a per-interface dhcp lease file.
-  printf 'export GATEWAY=%s\n' "${gw:-10.90.$n.1}" > "/tmp/ipv4config.$w"
+  # The device learns each WAN's address AND gateway from a dhcp lease file. It
+  # does not read the IP with an ioctl: if the file is missing or unparseable,
+  # update_wan_gateway ZEROES the interface's IP (str wzr, [x23, 0x24] at
+  # 0x1d9d8), so the card reports CurIP[0.0.0.0], never changes state, is never
+  # considered present, and no tunnel is created — leaving the handshake thread
+  # running once a second with nothing to send on. Silently.
+  #
+  # Two details, both learned the hard way, both non-obvious:
+  #
+  # 1. The interface->file mapping is a FIXED table in
+  #    get_wan_dhcp_gateway_for_x75, not the interface name:
+  #      rmnet_data0 -> zte_mwan2   V3E2net0 -> zte_mwan4
+  #      V3E1net0    -> zte_mwan3   eth0     -> zte_wan
+  #
+  # 2. The format is the one the device's own dhcp.script writes: shell
+  #    assignments with DOUBLE-QUOTED values and a trailing space in GATEWAY.
+  #    An unquoted `export GATEWAY=10.0.0.1` is rejected by the validator at
+  #    0x1c1b4 and looks identical to a missing file.
+  case "$w" in
+    rmnet_data0) lease=zte_mwan2 ;;
+    V3E1net0)    lease=zte_mwan3 ;;
+    V3E2net0)    lease=zte_mwan4 ;;
+    eth0)        lease=zte_wan ;;
+    *)           lease="$w" ;;
+  esac
+  addr=${ip%%/*}
+  mask=$(ipmask "${ip#*/}")
+  {
+    printf 'export IFNAME="%s"\n' "$w"
+    printf 'export PUBLIC_IP="%s"\n' "${addr:-10.90.$n.2}"
+    printf 'export NETMASK="%s"\n' "$mask"
+    printf 'export GATEWAY="%s "\n' "${gw:-10.90.$n.1}"
+  } > "/tmp/ipv4config.$lease"
+  say "  lease /tmp/ipv4config.$lease: ip=${addr:-10.90.$n.2}/$mask gw=${gw:-10.90.$n.1}"
 
   # IFF_RUNNING is the gate. Say so plainly if it is missing.
   if ! ip link show "$w" 2>/dev/null | grep -q 'LOWER_UP'; then

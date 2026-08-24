@@ -24,8 +24,8 @@ Last updated 2026-08-24.
 | Observability API + web UI | **done**, `-http` with shared-secret auth |
 | Deployment | **done**, `deploy/`, clean install and update on three distros |
 | Tested against a real server | **done**, over the public internet |
-| Running the real device binary locally | **harness built**, [`../emu/`](../emu/) — see below |
-| **Tested against the real device** | **in progress** — the harness closes this, once run |
+| Running the real device binary locally | **done**, [`../emu/`](../emu/) — see below |
+| **Tested against the real device** | **done** — real binary, real traffic, asserted in CI |
 
 ## Testing against the real binary
 
@@ -59,11 +59,34 @@ no cryptography. It is not that we found no crypto calls — there is no crypto
 library it could call into, because it imports nothing from any of the four
 crypto libraries it links against.
 
-What the harness settles: whether the real client accepts our handshake, agrees
-on the framing, reaches `ICG_AND_SRV_BOTH_OK`, stays alive, and pushes traffic
-through the proxy. What it cannot settle: throughput and scheduling (all the
-dummy WANs share one physical path, so no leg is really faster than another),
-and anything the stubbed libraries would have done.
+### What it has now shown
+
+`emu/e2e.sh` runs the whole thing from a clean start and is the same script CI
+runs on every push (`.github/workflows/emu.yml`, job `real-device`). It:
+
+1. starts `icgd` and the device's own `zte_icg_agg` on a private docker network;
+2. waits for the device to say, in its own words, `ICG_AND_SRV_BOTH_OK` and
+   `icg_agg_status=[1]`;
+3. puts a LAN client in its own network namespace behind the device's `br-lan`,
+   installs the DNAT rule the device's `icg_agg_fw.sh` would install, and makes
+   an ordinary `wget` to a public address;
+4. asserts the HTML came back **and** that the concentrator's own counters show
+   the flow was proxied with `tcp_skipped == 0` and `tcp_late == 0`.
+
+Handshake completes in ~2 s and the fetch returns real bytes from the real
+internet, across four tunnel legs. So the codec, the handshake, the framing, the
+reassembler and the transparent proxy are now confirmed against ZTE's own
+implementation rather than against a client we also wrote.
+
+This also caught a documentation error that the pcap could never have caught:
+the header field at `0x08` is `AggregationServerIcgId`, not the concentrator's
+tun address. See [PROTOCOL.md §2](PROTOCOL.md).
+
+**What it still cannot settle:** throughput and scheduling. All the emulated
+WANs share one physical path, so no leg is genuinely faster than another and the
+device's leg-selection logic is never really exercised. Nor does it cover
+anything the stubbed libraries would have done, ICMP (not implemented), or
+behaviour under real cellular loss and reordering.
 
 ## What is deliberately not implemented
 
@@ -180,51 +203,69 @@ proxied HTTP, reassembled deliberately reordered striped traffic, measured
 per-leg RTT and served cumulative ACKs on three Linux distributions over the
 open internet at 600 ms RTT, with nothing dropped.
 
-**What is still untested where it counts.** None of it has faced the real
-`zte_icg_agg`. `icg-probe` is a client *I* wrote from the same notes as the
-server, so any misreading of the protocol is reproduced identically on both
-sides and the probe will happily pass. That remains the single largest risk and
-no amount of further self-testing reduces it.
+**The largest risk is now closed.** The previous version of this document said
+that nothing had faced the real `zte_icg_agg`, and that `icg-probe` — a client
+written from the same notes as the server — could reproduce any misreading on
+both sides and pass regardless. That was the right thing to worry about, and it
+is no longer true: `emu/e2e.sh` runs ZTE's own binary against this concentrator
+on every push, and asserts real HTTP traffic from a LAN client, not just a
+handshake.
 
-**What would most likely break first, in order:**
+It immediately earned its keep by disproving something this document asserted as
+**PROVEN**: the header field at `0x08` is the ICG **id**, not the concentrator's
+tun address. The pcap could not have distinguished the two, because on a
+ZTE-dispatched device they are equal.
 
-1. **Liveness.** `device_zombie_state_check` releases resources after 30 s of
-   silence and stops the daemon after 150 s (§6). What refreshes its activity
-   timestamp is inferred, not proven — if it is not "any received frame", our
-   1 Hz tunnel-detect may not count and the session will drop every 30 s.
-2. **The handshake being accepted.** `refresh_icg_resource` only checks the
-   opcode, so this *should* work, but it is the first thing to watch.
-3. **Sequence-space start.** Whether the client's counters restart at 0 after a
-   handshake is unverified; the capture began mid-session. Our reassembler
-   latches onto whatever it sees, so this should not matter — but whether the
-   client accepts a downlink space starting at 0 is untested.
-4. **The downlink CRC32.** We send 0 because ZTE's server does. If the client
-   validates it under some configuration (`TcpDownCrcSwitch`), downlink TCP
-   breaks entirely.
-5. **Sequence resync under real loss.** We answer requests with our current
-   position; whether that is what the client expects is unverified ([§12](PROTOCOL.md)).
+**Of the five things predicted to break first, three are now settled:**
 
-**Effort to close the gap: small, and it is all bench work.** One session
-against the real device with `-v` on the concentrator and
-`/logfs/zte_icg_agg_log` on the client would confirm or refute all five in an
-afternoon, because the client logs its own state transitions by name and those
-names are the ones this code uses. The web UI exists precisely so that session
-does not require reading a journal. The prerequisite is not more RE — it is a
-device we are allowed to point at ourselves.
+| # | prediction | outcome |
+|---|---|---|
+| 1 | **Liveness** — `device_zombie_state_check` releases resources after 30 s of silence; whether our 1 Hz traffic refreshes its activity timestamp was inferred | **resolved.** The tunnel is held idle past 40 s in `e2e.sh` and the device neither releases resources nor exits; a second fetch still works. Asserted in CI. |
+| 2 | **The handshake being accepted** | **resolved.** The real client reaches `ICG_AND_SRV_BOTH_OK` and sets `icg_agg_status=1` in ~2 s, reproducibly. |
+| 3 | **Sequence-space start** — whether the client accepts a downlink space starting at 0 | **resolved.** It does; uplink and downlink both restart after a handshake and real traffic flows in both directions with `tcp_skipped = 0`. |
+| 4 | **The downlink CRC32** — we send 0 because ZTE's server does | **still open**, but weaker than it was: the real client accepted our 0 for every downlink frame in these runs. Untested under a config with `TcpDownCrcSwitch` set differently. |
+| 5 | **Sequence resync under real loss** | **still open.** The emulated legs share one physical path, so nothing is genuinely lost and the resync path is never entered. |
+
+**What is still untested, honestly.** In rough order of how much it matters:
+
+- **Throughput, and leg scheduling.** Every emulated WAN is the same veth over
+  the same host path, so no leg is really faster than another and the device's
+  scheduler never makes an interesting decision. Nothing here says this carries
+  a bonded workload at speed, or that our lowest-RTT-first downlink choice is
+  the right one.
+- **Real loss and reordering**, hence the retransmit and resync paths (#5).
+- **Real cellular WANs.** Three modems on three carriers behave nothing like
+  three veths, particularly at handover.
+- **Anything the stubbed libraries would have done.** `libzterouter` is
+  replaced by ~150 lines of C; a code path that depends on the real uci state or
+  on ZTE's MQTT control plane is not exercised.
+- **ICMP** (deliberately not implemented) and **the telemetry report bodies**
+  (received and counted, layouts unmapped).
+- **`--uninstall`, `--open-firewall`, and rollback after a bad binary** on a
+  real server, rather than against a scratch tree.
+
+**Effort to close what is left.** The remaining gaps are no longer RE problems —
+they are traffic problems. #4 and #5 need lossy legs, which is a `tc netem`
+qdisc on each veth in the harness rather than a device. Throughput and
+scheduling need real bonded hardware and a real workload; nothing on a laptop
+substitutes for that.
 
 ## Next actions
 
-1. **Bench test against the real device** (needs operator sign-off; see the
-   warnings in [`OPERATING.md`](OPERATING.md)).
-   Watch for: `ICG_AND_SRV_BOTH_OK` in the device log, no `[AGG][zombie]` lines,
-   `icg_agg_status=1`, and `Resyncs = 0` on our side.
-2. Close the non-blocking protocol gaps in
-   [§12 of the protocol doc](PROTOCOL.md), in particular the
-   activity-timestamp writers (point 1 above).
-3. Implement ICMP relaying if pings turn out to matter.
-4. Add a metrics endpoint; `Session.Stats` and `Reorder`'s counters exist but
+1. **Add `tc netem` loss and delay to the harness legs.** This is the highest
+   value item left: it is what turns #4 and #5 above from "untested" into
+   "tested", it needs no hardware, and it makes the striping and retransmit
+   paths run for real instead of on an ideal path.
+2. ~~Bench test against the real device.~~ **Done, and now continuous** —
+   `emu/e2e.sh` in CI. A test against real *hardware* (three cellular WANs)
+   still needs operator sign-off; see the warnings in
+   [`OPERATING.md`](OPERATING.md).
+3. Map the four telemetry report bodies (type 4, opcodes 11–14). The harness
+   makes the real device emit them on demand, which is what was missing before.
+4. Implement ICMP relaying if pings turn out to matter.
+5. Add a metrics endpoint; `Session.Stats` and `Reorder`'s counters exist but
    are only logged today.
-5. ~~Test the deploy scripts on a real server.~~ **Done** — see above. Still
+6. ~~Test the deploy scripts on a real server.~~ **Done** — see above. Still
    untested on a real server: `--uninstall`, `--open-firewall`, and rollback
    after a genuinely bad binary (all three were exercised against a scratch
    tree via `ICGD_ROOT`).

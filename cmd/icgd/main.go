@@ -192,7 +192,7 @@ func logStats(ctx context.Context, log *slog.Logger, srv *concentrator.Server, e
 			for _, s := range sessions {
 				// Per-session counters are logged by the session itself; this
 				// is just the roll-call.
-				log.Info("session", "tun_ip", s.TunIP(),
+				log.Info("session", "icg_id", s.IcgID(),
 					"idle", s.IdleFor().Round(time.Millisecond),
 					"dropped", s.Dropped())
 			}

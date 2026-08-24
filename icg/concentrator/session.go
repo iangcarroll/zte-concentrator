@@ -135,7 +135,7 @@ func newSession(srv *Server, tunIP uint32) *Session {
 	s := &Session{
 		srv:   srv,
 		tunIP: tunIP,
-		log:   srv.log.With("tun_ip", tunIPString(tunIP)),
+		log:   srv.log.With("icg_id", icgIDString(tunIP)),
 		in:    make(chan sessionMsg, 512),
 		out:   make(chan upstreamData, 512),
 
@@ -207,9 +207,9 @@ func (s *Session) stop() {
 	}
 }
 
-// TunIP is the session key: the tun address ZTE's dispatch allocated to this
+// IcgID is the session key: the tun address ZTE's dispatch allocated to this
 // device, rendered in network order.
-func (s *Session) TunIP() string { return tunIPString(s.tunIP) }
+func (s *Session) IcgID() string { return icgIDString(s.tunIP) }
 
 // Dropped is how many inbound frames were shed because the session goroutine
 // could not keep up. Non-zero means the concentrator is the bottleneck.
@@ -344,7 +344,7 @@ func (s *Session) onHandshakeReq(in inbound) {
 	s.stats.Handshakes++
 	req, err := icg.ParseHandshakeReq(in.frame.Body)
 	if err == nil {
-		s.clientMAC, s.clientTunIP = req.MAC, req.TunIP
+		s.clientMAC, s.clientTunIP = req.MAC, req.IcgID
 	} else {
 		s.log.Warn("malformed handshake request", "err", err)
 	}
@@ -701,14 +701,14 @@ func (s *Session) sendOn(leg *Leg, f *icg.Frame) {
 		return
 	}
 	f.Magic = s.srv.cfg.Magic
-	f.TunIP = s.tunIP
+	f.IcgID = s.tunIP
 	s.stats.FramesOut++
 	leg.writeRaw(f.Encode())
 }
 
 // ---------------------------------------------------------------------------
 
-func tunIPString(v uint32) string {
+func icgIDString(v uint32) string {
 	var b [4]byte
 	// The client writes this field in network order; render it that way.
 	b[0] = byte(v)

@@ -157,7 +157,7 @@ function renderSessions(list){
         bad(l.write_errors,"write err")+'</td></tr>').join("");
     return '<div style="margin-bottom:1.2rem">'+
       '<div class="kv" style="margin-bottom:.5rem">'+
-        '<div><i>tun ip</i><b class="mono">'+esc(s.tun_ip)+'</b></div>'+
+        '<div><i>icg id</i><b class="mono">'+esc(s.icg_id)+'</b></div>'+
         '<div><i>state</i><b class="'+stateClass(s.state)+'">'+esc(s.state)+'</b></div>'+
         '<div><i>mac</i><b class="mono">'+esc(s.client_mac)+'</b></div>'+
         '<div><i>admitted</i><b class="'+(s.admitted?"ok":"bad")+'">'+(s.admitted?"yes":"no")+'</b></div>'+

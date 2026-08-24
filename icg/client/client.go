@@ -37,11 +37,11 @@ type Config struct {
 	TCPLegs int
 	UDPLegs int
 
-	// TunIP is what the device would have in icg.conf as
+	// IcgID is what the device would have in icg.conf as
 	// AggregationServerTunIP. It is the session key, so two clients using the
 	// same value share a session on the server.
-	TunIP netip.Addr
-	// ClientTunIP is the device's own tun0 address, one above TunIP in
+	IcgID netip.Addr
+	// ClientTunIP is the device's own tun0 address, one above IcgID in
 	// practice. Reported in the handshake.
 	ClientTunIP netip.Addr
 	// MAC is the device identity the handshake carries. Zero value gets a
@@ -56,8 +56,8 @@ func (c *Config) setDefaults() {
 	if c.TCPLegs == 0 {
 		c.TCPLegs = 1
 	}
-	if !c.TunIP.IsValid() {
-		c.TunIP = netip.MustParseAddr("172.16.25.18")
+	if !c.IcgID.IsValid() {
+		c.IcgID = netip.MustParseAddr("172.16.25.18")
 	}
 	if !c.ClientTunIP.IsValid() {
 		c.ClientTunIP = netip.MustParseAddr("172.16.25.19")
@@ -205,7 +205,7 @@ func (c *Client) Close() {
 // Send writes a frame on a specific leg, stamping the session identity.
 func (c *Client) Send(l *Leg, f *icg.Frame) error {
 	f.Magic = c.cfg.Magic
-	f.TunIP = tunIPWord(c.cfg.TunIP)
+	f.IcgID = tunIPWord(c.cfg.IcgID)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	_, err := l.conn.Write(f.Encode())

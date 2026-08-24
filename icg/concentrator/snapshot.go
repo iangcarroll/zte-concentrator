@@ -46,7 +46,7 @@ type AdmissionSnapshot struct {
 
 // SessionSnapshot is one CPE's state at a moment in time.
 type SessionSnapshot struct {
-	TunIP       string          `json:"tun_ip"`
+	IcgID       string          `json:"icg_id"`
 	State       string          `json:"state"`
 	Admitted    bool            `json:"admitted"`
 	ClientMAC   string          `json:"client_mac"`
@@ -108,7 +108,7 @@ type CounterSnapshot struct {
 // snapshot builds the session's view. Session-goroutine only.
 func (s *Session) snapshot(now time.Time) SessionSnapshot {
 	out := SessionSnapshot{
-		TunIP:     tunIPString(s.tunIP),
+		IcgID:     icgIDString(s.tunIP),
 		State:     s.state.String(),
 		Admitted:  s.admitted,
 		ClientMAC: macString(s.clientMAC),
@@ -176,7 +176,7 @@ func (s *Session) Snapshot() SessionSnapshot {
 	if p := s.pub.Load(); p != nil {
 		return *p
 	}
-	return SessionSnapshot{TunIP: tunIPString(s.tunIP), State: "starting"}
+	return SessionSnapshot{IcgID: icgIDString(s.tunIP), State: "starting"}
 }
 
 // Snapshot gathers the whole server's state.
@@ -207,7 +207,7 @@ func (s *Server) Snapshot() ServerSnapshot {
 		out.Sessions = append(out.Sessions, sess.Snapshot())
 	}
 	sort.Slice(out.Sessions, func(i, j int) bool {
-		return out.Sessions[i].TunIP < out.Sessions[j].TunIP
+		return out.Sessions[i].IcgID < out.Sessions[j].IcgID
 	})
 	return out
 }

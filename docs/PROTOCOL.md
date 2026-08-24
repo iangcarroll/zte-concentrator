@@ -78,7 +78,7 @@ offset  size  field          notes
 0x04      4   body_length    u32 LE. Excludes these 8 bytes. Includes the
                              10-byte sub-header below.
 --- body (body_length bytes) ---
-0x08      4   tun_ip         opaque u32 (see note)
+0x08      4   icg_id         opaque u32; AggregationServerIcgId (see note)
 0x0c      1   type           packet class, see §3
 0x0d      1   opcode         sub-type within the class
 0x0e      4   seq            u32 BIG-endian (htonl/ntohl). Meaning depends
@@ -97,17 +97,36 @@ the body is stored at `pkt+0x108` (payload at `+0x112`) and
 struct offsets mean different things in the send and receive paths — worth
 remembering when reading the disassembly.
 
-### The `tun_ip` field is not validated
+### The field at `0x08` is the ICG **id**, not an IP — **PROVEN**
 
-It holds `AggregationServerTunIP` — the **concentrator's** tun address, not the
-client's (in the capture, `172.16.25.18`, while the client's own tun0 is
-`172.16.25.19`). The client writes it as `htonl(...)`, i.e. network order.
-ZTE's real concentrator writes the same address **byte-reversed**
-(`18.25.16.172`), which is only possible if the server stores it as a native
-host-order `u32` — and the client evidently does not care. So a replacement
-concentrator may echo it in either order, or echo whatever the client sent.
-**PROVEN** (both byte orders present in the same capture; no comparison against
-it exists in any receive path read so far).
+It holds `icg.conf`'s `AggregationServerIcgId`: the opaque identifier ZTE's MQTT
+dispatch assigns to a CPE. We use it as the session key.
+
+**Proven by experiment**, not by reading the capture: setting
+`AggregationServerIcgId=305419896` (`0x12345678`) on the real binary made every
+frame carry `0x12345678` in this field, with `AggregationServerTunIP` left
+unchanged.
+
+> **This documentation previously said the field carried
+> `AggregationServerTunIP`, the concentrator's tun address. That was wrong.**
+> It is worth recording why, because the wrong reading was *entirely consistent
+> with the capture*: there the field was `0xac101912`, which is exactly
+> `172.16.25.18` — the configured `AggregationServerTunIP`, while the client's
+> own tun0 was `172.16.25.19`. ZTE's dispatch evidently assigns a device's id
+> and its tun address consistently, so the two are equal on a real device and no
+> amount of staring at the pcap could have separated them. Running the binary
+> with the two set to *different* values was the only thing that could.
+
+The client writes it with `htonl(...)`, i.e. network order. ZTE's real
+concentrator writes the same value **byte-reversed**, which is only possible if
+the server stores it as a native host-order `u32` — and the client evidently
+does not care. So a replacement concentrator may echo it in either order, or
+echo whatever the client sent. **PROVEN** (both byte orders present in the same
+capture; no comparison against it exists in any receive path read so far).
+
+Because the id equals the tun address on a dispatched device, `icgd` still
+renders it as a dotted quad in logs and in the API — it is the readable form of
+the value there. That is a logging convenience, not a claim about the field.
 
 ### What the sub-header `seq` field means, per type — **PROVEN**
 

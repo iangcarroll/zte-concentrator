@@ -118,7 +118,7 @@ func (l *leg) send(f *icg.Frame) {
 	l.t.Helper()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	f.TunIP = testTunIP
+	f.IcgID = testTunIP
 	if _, err := l.conn.Write(f.Encode()); err != nil {
 		l.t.Fatalf("leg write: %v", err)
 	}
@@ -188,8 +188,8 @@ func (l *leg) handshake() {
 	if len(ack.Body) != 0 {
 		l.t.Errorf("ICG_SERVER_HANDSHAKE_ACK carried %d body bytes; the client ignores them", len(ack.Body))
 	}
-	if ack.TunIP != testTunIP {
-		l.t.Errorf("server echoed tun_ip %#x, want %#x", ack.TunIP, uint32(testTunIP))
+	if ack.IcgID != testTunIP {
+		l.t.Errorf("server echoed tun_ip %#x, want %#x", ack.IcgID, uint32(testTunIP))
 	}
 
 	l.send(&icg.Frame{Type: icg.TypeHandshake, Opcode: icg.HSConfirmAck, Body: fakePing(3)})
@@ -230,7 +230,7 @@ func TestHandshake(t *testing.T) {
 	for {
 		ss := h.srv.Sessions()
 		if len(ss) == 1 {
-			if got := ss[0].TunIP(); got != "172.16.25.18" {
+			if got := ss[0].IcgID(); got != "172.16.25.18" {
 				t.Errorf("session key = %s, want 172.16.25.18", got)
 			}
 			return

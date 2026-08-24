@@ -216,7 +216,7 @@ func (s *Session) sendTCPDown(flow icg.Flow, op icg.TCPOpcode, data []byte) {
 		Body: flow.DownBody(seq, op, data).AppendTo(nil),
 	}
 	f.Magic = s.srv.cfg.Magic
-	f.TunIP = s.tunIP
+	f.IcgID = s.tunIP
 
 	enc := f.Encode()
 	s.stashTCP.put(seq, enc)

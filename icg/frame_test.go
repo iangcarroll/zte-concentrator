@@ -41,8 +41,8 @@ func TestDecodeKnownFrame(t *testing.T) {
 	if f.Seq != 0 {
 		t.Errorf("Seq = %d, want 0", f.Seq)
 	}
-	if got := f.TunIPAddr().String(); got != "172.16.25.18" {
-		t.Errorf("TunIPAddr = %s, want 172.16.25.18", got)
+	if got := f.IcgIDAsIP().String(); got != "172.16.25.18" {
+		t.Errorf("IcgIDAsIP = %s, want 172.16.25.18", got)
 	}
 	r, err := ParseRTTBody(f.Body)
 	if err != nil {

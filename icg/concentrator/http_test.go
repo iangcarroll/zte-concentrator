@@ -171,8 +171,8 @@ func TestSnapshotReflectsALiveSession(t *testing.T) {
 	}
 
 	s := snap.Sessions[0]
-	if s.TunIP != "172.16.25.18" {
-		t.Errorf("TunIP = %q", s.TunIP)
+	if s.IcgID != "172.16.25.18" {
+		t.Errorf("IcgID = %q", s.IcgID)
 	}
 	if !s.Admitted {
 		t.Error("session should be admitted with no allowlist configured")

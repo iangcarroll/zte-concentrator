@@ -149,19 +149,21 @@ jobs:
   real-device:
     needs: build
     if: github.event_name != 'pull_request'
-    # A NATIVE arm64 runner, not x86 + QEMU. The first attempt ran under
-    # qemu-user and the binary itself worked fine — config, hardware detection,
-    # logging, tun0 — but every netlink operation failed:
+    # A NATIVE arm64 runner rather than x86 + QEMU.
     #
-    #   iptables: Failed to initialize nft: Protocol not supported
-    #   Cannot talk to rtnetlink: Not supported
-    #   Error: ipv4: FIB table does not exist.
+    # Under qemu-user the binary itself ran fine — config, hardware detection,
+    # logging, tun0 — but every netlink operation failed ("Cannot talk to
+    # rtnetlink: Not supported", "FIB table does not exist"), because qemu-user
+    # does not translate rtnetlink faithfully. The device installs per-WAN
+    # policy routing before it opens a tunnel, so those failures are worth
+    # avoiding on their own.
     #
-    # qemu-user does not translate rtnetlink faithfully. The device installs
-    # per-WAN policy routing before it opens a tunnel, so with `ip rule` failing
-    # it never opened one, never handshook, and the concentrator sat on "no
-    # sessions" for the whole window. Not a protocol problem — an emulation
-    # fidelity problem, and the fix is to stop emulating.
+    # Being honest about the history: QEMU was NOT what kept the handshake from
+    # completing. Native arm64 stalled at exactly the same point. The real
+    # causes turned out to be that the device ships with ICGLogLevel=0 (so it
+    # was failing silently), that it ignores any WAN without IFF_RUNNING, and
+    # that it reads each WAN's address and gateway from a DHCP lease file whose
+    # exact format it requires. See emu/entrypoint.sh.
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -210,115 +212,28 @@ jobs:
           tags: emu:test
           cache-from: type=gha
 
-      - name: run the concentrator
-        if: steps.blob.outputs.have == 'yes'
-        run: |
-          make icgd
-          # 0.0.0.0 so the container can reach it on the docker0 gateway.
-          ./bin/icgd -tcp :10088 -udp-base 10000 -udp-legs 2 -v -stats 5s \
-            > /tmp/icgd.log 2>&1 &
-          for i in $(seq 1 50); do ss -lnt | grep -q ':10088' && break; sleep 0.2; done
-          ss -lntu | grep -E ':10088|:10000' || { cat /tmp/icgd.log; exit 1; }
-
-      - name: /dev/net/tun must exist
-        if: steps.blob.outputs.have == 'yes'
-        run: |
-          # zte_icg_agg creates tun0 before anything else and exits if it
-          # cannot, so this is a hard prerequisite rather than a nicety.
-          sudo modprobe tun 2>/dev/null || true
-          ls -l /dev/net/tun
-
-      - name: run the DEVICE'S OWN binary against it
+      - name: real traffic through the real binary
         if: steps.blob.outputs.have == 'yes'
         env:
-          # How long to let it talk to the concentrator. The handshake loop runs
-          # at 1 Hz, so this is generous even under QEMU.
-          RUN_FOR: 150
+          IMAGE: emu:test
         run: |
-          # Detached, not `timeout docker run`. zte_icg_agg installs a SIGTERM
-          # handler ("SIG SIGTERM received!") and does not necessarily exit on
-          # it, so a foreground run outlives its timeout and hangs the job —
-          # which is exactly what happened the first time. Starting it detached
-          # and tearing it down with `docker rm -f` cannot hang.
-          #
-          # NET_ADMIN for tun0 and the dummy links, NET_RAW for the iptables
-          # rules the transparent proxy installs.
-          # --privileged because the device's startup writes sysctls, installs
-          # iptables rules and adds policy-routing tables. It is in its own
-          # network namespace, so this is contained; NET_ADMIN alone is not
-          # enough for the /proc/sys writes it performs.
-          docker run -d --name icgdev --platform linux/arm64 \
-            --privileged \
-            --device /dev/net/tun \
-            -e SERVER_IP=172.17.0.1 -e TCP_PORT=10088 -e UDP_BASE=10000 \
-            -v "$PWD/emu/blobs/zte_icg_agg:/opt/icg/zte_icg_agg:ro" \
-            emu:test
-
-          # Stop early once the device says it is up, so a passing run is quick
-          # and a failing one still gets the full window to prove it.
-          for i in $(seq 1 "$RUN_FOR"); do
-            if docker logs icgdev 2>&1 | grep -q 'ICG_AND_SRV_BOTH_OK'; then
-              echo "device reported ICG_AND_SRV_BOTH_OK after ${i}s"
-              break
-            fi
-            if ! docker inspect -f '{{.State.Running}}' icgdev 2>/dev/null | grep -q true; then
-              echo "the container exited after ${i}s"
-              break
-            fi
-            sleep 1
-          done
-
-          # If it did not get up, capture what it was doing. Three runs were
-          # spent guessing at a stall that a process list would have named.
-          if ! docker logs icgdev 2>&1 | grep -q 'ICG_AND_SRV_BOTH_OK'; then
-            echo "=========== it did not come up; what is it doing? ==========="
-            docker exec icgdev sh -c 'ps -o pid,stat,args 2>/dev/null || ps' || true
-            docker exec icgdev sh -c 'ls /proc/*/task 2>/dev/null | head -20' || true
-            docker exec icgdev sh -c 'ip -brief addr; ip rule show 2>&1 | head' || true
-          fi
-
-          docker logs icgdev > /tmp/device.log 2>&1
-          docker rm -f icgdev >/dev/null 2>&1 || true
-          echo "=========== the device's own log ==========="
-          tail -100 /tmp/device.log
-
-      - name: the device must reach ICG_AND_SRV_BOTH_OK
-        if: steps.blob.outputs.have == 'yes'
-        run: |
-          fail=0
-          check() {
-            if grep -qF "$1" /tmp/device.log; then
-              echo "  ok   $2"
-            else
-              echo "::error::$2 — not found in the device log"
-              fail=1
-            fi
-          }
-          # These are the device's own words, from its own state machine.
-          check 'start send handshake with config'  'the client sent ICG_HANDSHAKE_REQ_WITH_CONFIG'
-          check 'update ICG_SERVER_READY'           'the client accepted our ICG_SERVER_HANDSHAKE_ACK'
-          check 'ICG_AND_SRV_BOTH_OK'               'the client reached ICG_AND_SRV_BOTH_OK'
-          check 'icg_agg_status = 1'                'the client declared the tunnel up'
-          if grep -q 'agg_server_exit' /tmp/device.log; then
-            echo "::error::the client's zombie watchdog gave up on us"
-            fail=1
-          fi
-          exit $fail
-
-      - name: and our side must agree
-        if: steps.blob.outputs.have == 'yes'
-        run: |
-          grep -q 'handshake complete' /tmp/icgd.log \
-            || { echo "::error::the concentrator never completed a handshake"; tail -40 /tmp/icgd.log; exit 1; }
-          echo "  ok   the concentrator logged a completed handshake"
-          if grep -q 'magic-mismatch\|framing-lost' /tmp/icgd.log; then
-            echo "::error::the concentrator reported a framing problem"
-            grep 'magic-mismatch\|framing-lost' /tmp/icgd.log
-            exit 1
-          fi
+          # The same script that runs locally (emu/e2e.sh), so CI and a
+          # developer's laptop cannot drift apart. It stands up the
+          # concentrator and the device, waits for the handshake, then pushes a
+          # real HTTP request from a LAN client namespace through the tunnel
+          # and asserts on the concentrator's own flow and reassembly counters.
+          sudo modprobe tun 2>/dev/null || true
+          ls -l /dev/net/tun
+          BLOB=blobs/zte_icg_agg KEEP=1 ./emu/e2e.sh
 
       - name: logs
+        # KEEP=1 above leaves the containers up precisely so this step can read
+        # them after a failure.
         if: always() && steps.blob.outputs.have == 'yes'
         run: |
-          docker rm -f icgdev >/dev/null 2>&1 || true
-          echo "=== concentrator ==="; tail -80 /tmp/icgd.log || true
+          echo "=== the device's own log ==="
+          docker logs icgdev-e2e 2>&1 | tail -120 || true
+          echo "=== concentrator ==="
+          docker logs icgd-e2e 2>&1 | tail -80 || true
+          docker rm -f icgdev-e2e icgd-e2e >/dev/null 2>&1 || true
+          docker network rm icg-e2e >/dev/null 2>&1 || true

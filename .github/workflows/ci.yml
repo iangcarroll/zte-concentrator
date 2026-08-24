@@ -73,7 +73,7 @@ jobs:
         run: |
           # The probe should FAIL here: no handshake ack for an unknown MAC.
           if ./bin/icg-probe -server 127.0.0.1:10088 -legs 1 \
-               -mac de:ad:be:ef:99:99 -tun-ip 172.16.99.1 -timeout 8s; then
+               -mac de:ad:be:ef:99:99 -icg-id 172.16.99.1 -timeout 8s; then
             echo "::error::an unlisted device was admitted"
             exit 1
           fi

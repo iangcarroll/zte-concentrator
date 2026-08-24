@@ -135,7 +135,7 @@ func (s *Session) sendUDPDown(pkt []byte) {
 
 	f := &icg.Frame{Type: icg.TypeUDP, Opcode: 0, Seq: seq, Body: pkt}
 	f.Magic = s.srv.cfg.Magic
-	f.TunIP = s.tunIP
+	f.IcgID = s.tunIP
 
 	enc := f.Encode()
 	s.stashUDP.put(seq, enc)

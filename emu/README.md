@@ -80,22 +80,37 @@ the 159 MB `modem.elf` in the `zte` repo — not for this.)
 
 ## Use it
 
+The one command that matters — the full end-to-end test, exactly as CI runs it:
+
 ```sh
 export ICG_BLOB_KEY=<your key>
 make -C emu decrypt
+./emu/e2e.sh
+```
+
+That stands up the concentrator and the device on a private docker network,
+waits for the handshake, pushes a real HTTP request from a LAN client namespace
+through the tunnel, holds the tunnel idle past the device's 30 s zombie
+threshold, and asserts on the concentrator's own counters. `KEEP=1` leaves the
+containers up to poke at; `SOAK=0` skips the idle hold; `TARGET_HOST` changes
+what it fetches.
+
+To drive it by hand instead:
+
+```sh
 make pull            # CI already built it; this is much faster than `make build`
 
-# In one terminal: the concentrator. --http on all interfaces so the container
-# can be pointed at the host.
+# In one terminal: the concentrator.
 cd .. && make icgd && ./bin/icgd -tcp :10088 -udp-base 10000 -udp-legs 4 -v
 
 # In another: the real client.
 make run
 ```
 
-`make run` mounts the binary, creates dummy `rmnet_data0` / `V3E1net0` WAN
-interfaces and a `br-lan` bridge, fills the server address into the device's own
-`icg.conf`, and execs the binary. What you are looking for on its stderr is the
+`make run` mounts the binary, creates `rmnet_data0` / `V3E1net0` WAN interfaces
+and a `br-lan` bridge, writes the DHCP lease files the device insists on
+(see below), fills the server address into the device's own `icg.conf`, and
+execs the binary. What you are looking for on its stderr is the
 device's own state machine reporting success in its own words:
 
 ```
@@ -113,7 +128,7 @@ up on the concentrator.
 |---|---|---|
 | `SERVER_IP` | `172.17.0.1` | the concentrator as seen from the container. `host.docker.internal` on Docker Desktop |
 | `TCP_PORT` / `UDP_BASE` | `10088` / `10000` | must match the concentrator |
-| `WANS` | `rmnet_data0 V3E1net0` | dummy WAN links to create; names must appear in `icg.conf`'s `AggNetcard` |
+| `WANS` | `rmnet_data0 V3E1net0` | WAN links to create; names must appear in `icg.conf`'s `AggNetcard`. Created as `veth` pairs, **not** `dummy` — see below |
 | `TRACE` | `0` | `1` runs it under `strace -e trace=network,openat` |
 
 Config lives in `etc/uci.conf` (the shim's uci backing store) and
@@ -196,18 +211,72 @@ default verbosity from before `ICGLogLevel` had been read.
 This repo's copy sets `ICGLogLevel=4`. On real hardware, set it before you try
 to work out why a tunnel will not come up.
 
+## Two more things the device requires, silently
+
+Both cost a debugging round each, and both are worth knowing before touching
+real hardware. Neither produces a message that names the problem.
+
+### A WAN with no carrier does not exist
+
+`is_wan_running` (`0x1aff4`) tests **bit 6** of the interface flags —
+`IFF_RUNNING`, i.e. carrier — not `IFF_UP`. A `dummy` link never sets it, so the
+first version of this harness got `change type:0` for all sixteen WAN slots and
+opened no tunnel at all, while `ip addr` showed every interface up with an
+address. That is why `WANS` creates **veth pairs** (both ends up, so both have
+carrier) and uses pre-existing interfaces like `eth0` as-is.
+
+### The WAN address comes from a lease file, and a failed read zeroes it
+
+The device never asks the kernel for a WAN's address or gateway. It reads
+`/tmp/ipv4config.<name>`, and `<name>` comes from a **fixed table** inside
+`get_wan_dhcp_gateway_for_x75` — not from the interface's own name:
+
+| interface | lease file |
+|---|---|
+| `rmnet_data0` | `/tmp/ipv4config.zte_mwan2` |
+| `V3E1net0` | `/tmp/ipv4config.zte_mwan3` |
+| `V3E2net0` | `/tmp/ipv4config.zte_mwan4` |
+| `eth0` | `/tmp/ipv4config.zte_wan` |
+
+The format is whatever its own `dhcp.script` writes — shell `export`
+assignments, values in **double quotes**, and a **trailing space** inside
+`GATEWAY`:
+
+```sh
+export IFNAME="eth0"
+export PUBLIC_IP="10.77.0.2"
+export NETMASK="255.255.0.0"
+export GATEWAY="10.77.0.1 "
+```
+
+A failed lookup does not fall back to anything: at `0x1d9d8` it stores `wzr`
+over the address field, so you get `CurIP[0.0.0.0]` and then `get invaid
+gateway!` (their spelling). Getting this exactly right — copied from the
+device's own `dhcp.script` rather than guessed — is what made the handshake
+succeed.
+
 ## What this does and does not prove
 
 **Does:** that the real client accepts our handshake, agrees on the framing,
-reaches `ICG_AND_SRV_BOTH_OK`, keeps the session alive, and pushes real traffic
-through the transparent proxy. That is exactly the gap `docs/STATUS.md` names.
+reaches `ICG_AND_SRV_BOTH_OK`, keeps the session alive across its own 30 s
+zombie threshold, and carries real HTTP traffic from a real LAN client through
+the transparent proxy. That was the largest open gap in `docs/STATUS.md`, and it
+is closed.
+
+It has already paid for itself twice: it disproved a field the protocol doc had
+marked **PROVEN** (`0x08` is the ICG id, not the concentrator's tun address —
+indistinguishable in the capture), and it settled the liveness question that was
+top of the "most likely to break first" list.
 
 **Does not:**
 
-- **Throughput or scheduling.** All the dummy WANs egress through one container
+- **Throughput or scheduling.** All the WANs egress through one container
   interface, so there is one physical path with one RTT. Striping happens, but
   no leg is genuinely faster than another, so the min-RTT scheduler has nothing
-  to choose between.
+  to choose between. Adding `tc netem` per leg is the obvious next step and is
+  the top item in `docs/STATUS.md`.
+- **Loss, and therefore retransmit and resync.** An ideal path never enters
+  those code paths.
 - **The DIAG/modem side.** No radios, no `ubus`, no `zte_router` orchestrator.
 - **Anything the missing libraries do.** They are stubs. If the binary ever
   starts calling into `libzteencrypt` for the data plane it would fail here —

@@ -181,6 +181,45 @@ does, so a geo-DNS or IPv6-only answer fails and looks like a server bug —
 `neverssl.com` resolves IPv6-only from EC2, for instance. The probe prints the
 address it shipped.
 
+### Three device-side traps, learned the hard way
+
+These come from running the device's own binary under `emu/` and watching it
+fail. All three present as "the device never connects" and none of them produce
+a useful message on the device.
+
+1. **The device ships with logging off.** `ICGLogLevel=0` in `icg.conf` means
+   *no output at all* — ZTE's own comment is `0-无，1-错误，2-警告，3-信息，4-调试`.
+   A device that appears to be doing nothing may simply be refusing to say what
+   it is doing. Set `ICGLogLevel=4` before you debug anything, and read
+   `/logfs/zte_icg_agg_log`. Three of our debugging rounds were spent guessing at
+   a stall this would have named outright.
+
+2. **A WAN without carrier is silently ignored.** `is_wan_running` tests bit 6
+   of the interface flags — `IFF_RUNNING` — so an interface that is `UP` but has
+   no carrier never becomes a tunnel leg, and the device reports `change type:0`
+   for every slot and opens nothing. If you expect four legs and get one, check
+   carrier before you check anything else.
+
+3. **The WAN address comes from a DHCP lease file, and a bad read zeroes it.**
+   The device does not ask the kernel for a WAN's address and gateway; it reads
+   them from `/tmp/ipv4config.<name>`, where `<name>` comes from a **fixed
+   interface table**, not the interface's own name
+   (`rmnet_data0`→`zte_mwan2`, `V3E1net0`→`zte_mwan3`, `V3E2net0`→`zte_mwan4`,
+   `eth0`→`zte_wan`). The format is the one its own `dhcp.script` writes —
+   shell `export` assignments with **double-quoted** values and a **trailing
+   space** inside `GATEWAY`:
+
+   ```sh
+   export IFNAME="eth0"
+   export PUBLIC_IP="10.77.0.2"
+   export NETMASK="255.255.0.0"
+   export GATEWAY="10.77.0.1 "
+   ```
+
+   A failed lookup does not fall back to the kernel — it *zeroes the address*
+   and you get `CurIP[0.0.0.0]`, followed by `get invaid gateway!` (their
+   spelling). See `emu/entrypoint.sh` for a working reproduction.
+
 ---
 
 ## Point a device at it

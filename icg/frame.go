@@ -28,7 +28,7 @@ const DefaultMagic uint32 = 0x12345678
 // body always begins with SubHdrLen bytes of per-packet metadata.
 const (
 	OuterLen  = 8  // magic + body_length
-	SubHdrLen = 10 // tun_ip + type + opcode + seq
+	SubHdrLen = 10 // icg_id + type + opcode + seq
 	HdrLen    = OuterLen + SubHdrLen
 
 	// MaxBodyLen bounds a single frame. The client clamps TCP MSS to 1400 and
@@ -52,7 +52,7 @@ var (
 //
 //	0x00 u32 LE  magic
 //	0x04 u32 LE  body_length      (excludes these 8 bytes, includes the 10 below)
-//	0x08 u32     tun_ip           opaque; not validated by the client
+//	0x08 u32     icg_id           opaque; not validated by the client
 //	0x0c u8      type
 //	0x0d u8      opcode
 //	0x0e u32 BE  seq              meaning depends on Type, see SeqMeaning
@@ -60,14 +60,23 @@ var (
 type Frame struct {
 	Magic uint32
 
-	// TunIP is stored and re-emitted verbatim, never validated.
+	// IcgID is stored and re-emitted verbatim, never validated.
 	//
-	// It carries AggregationServerTunIP — the concentrator's tun address, not
-	// the client's. The client writes it via htonl(); ZTE's own concentrator
-	// writes the same address byte-reversed, which is only possible if it
-	// stores a native host-order uint32. The client evidently does not compare
-	// it, so we echo whatever the peer sent and never reject on it. (§2)
-	TunIP  uint32
+	// It carries icg.conf's AggregationServerIcgId — the identifier ZTE's MQTT
+	// dispatch assigns to a CPE. PROVEN by experiment: setting
+	// AggregationServerIcgId=305419896 (0x12345678) on the real binary made
+	// every frame carry 0x12345678 here.
+	//
+	// This was previously documented as AggregationServerTunIP, the
+	// concentrator's tun address. That reading fit the capture perfectly and
+	// was still wrong: in the capture the id happened to equal the tun address
+	// as an integer (0xac101912 == 172.16.25.18), because ZTE's dispatch
+	// assigns the two consistently. Only running the binary with the two set
+	// to different values separated them.
+	//
+	// The client writes it with htonl() and does not appear to compare it, so
+	// we echo whatever the peer sent and never reject on it. (§2)
+	IcgID  uint32
 	Type   Type
 	Opcode uint8
 	Seq    uint32
@@ -86,7 +95,7 @@ func (f *Frame) AppendTo(dst []byte) []byte {
 	var hdr [HdrLen]byte
 	binary.LittleEndian.PutUint32(hdr[0:], magic)
 	binary.LittleEndian.PutUint32(hdr[4:], uint32(SubHdrLen+len(f.Body)))
-	binary.LittleEndian.PutUint32(hdr[8:], f.TunIP) // opaque: preserve bytes
+	binary.LittleEndian.PutUint32(hdr[8:], f.IcgID) // opaque: preserve bytes
 	hdr[12] = byte(f.Type)
 	hdr[13] = f.Opcode
 	binary.BigEndian.PutUint32(hdr[14:], f.Seq)
@@ -122,7 +131,7 @@ func Decode(buf []byte, magic uint32) (*Frame, int, error) {
 	b := buf[OuterLen : OuterLen+bodyLen]
 	return &Frame{
 		Magic:  magic,
-		TunIP:  binary.LittleEndian.Uint32(b[0:]),
+		IcgID:  binary.LittleEndian.Uint32(b[0:]),
 		Type:   Type(b[4]),
 		Opcode: b[5],
 		Seq:    binary.BigEndian.Uint32(b[6:]),
@@ -134,11 +143,13 @@ func (f *Frame) String() string {
 	return fmt.Sprintf("icg{%s/%s seq=%d body=%dB}", f.Type, OpcodeName(f.Type, f.Opcode), f.Seq, len(f.Body))
 }
 
-// TunIPAddr renders TunIP as a dotted quad, interpreting it in network order —
-// which is how the ZTE client writes it. Diagnostics only.
-func (f *Frame) TunIPAddr() net.IP {
+// IcgIDAsIP renders IcgID as a dotted quad. On a ZTE-dispatched device the id
+// equals the tun address as an integer, so this is usually the readable form of
+// it — but it is a convenience for logs, not a claim about the field. An id set
+// by hand renders as nonsense here and that is fine.
+func (f *Frame) IcgIDAsIP() net.IP {
 	var b [4]byte
-	binary.LittleEndian.PutUint32(b[:], f.TunIP)
+	binary.LittleEndian.PutUint32(b[:], f.IcgID)
 	return net.IPv4(b[0], b[1], b[2], b[3])
 }
 

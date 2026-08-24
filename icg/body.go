@@ -214,11 +214,11 @@ const HandshakeReqLen = 50
 // any of it — the client never checks that we understood it (§6) — but the MAC
 // is the device identity ZTE's cloud keys on, so it is worth logging.
 //
-// Fields beyond MAC/TunIP are device and config telemetry whose individual
+// Fields beyond MAC/IcgID are device and config telemetry whose individual
 // meanings are NOT mapped; Unknown holds them verbatim.
 type HandshakeReq struct {
 	MAC     net.HardwareAddr // payload 0..5
-	TunIP   netip.Addr       // payload 6..9, inet_addr of the local tun IP
+	IcgID   netip.Addr       // payload 6..9, inet_addr of the local tun IP
 	Unknown [40]byte         // payload 10..49, all htonl'd u32s
 }
 
@@ -228,7 +228,7 @@ func ParseHandshakeReq(b []byte) (HandshakeReq, error) {
 		return h, fmt.Errorf("%w: handshake req %d < %d", ErrBodyShort, len(b), HandshakeReqLen)
 	}
 	h.MAC = net.HardwareAddr(append([]byte(nil), b[0:6]...))
-	h.TunIP = addr4(b[6:10])
+	h.IcgID = addr4(b[6:10])
 	copy(h.Unknown[:], b[10:50])
 	return h, nil
 }
