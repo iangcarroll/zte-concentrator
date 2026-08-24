@@ -1,0 +1,6 @@
+# The plaintext device binary is never committed: it is ZTE's, and a private
+# repo can be made public by accident. Only the encrypted form goes in.
+*
+!.gitignore
+!.gitkeep
+!*.enc

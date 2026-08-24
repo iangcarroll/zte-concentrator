@@ -26,6 +26,27 @@ env:
   IMAGE: ghcr.io/${{ github.repository }}/emu
 
 jobs:
+  # Cheap, always runs, and catches the mistake that matters most: committing
+  # ZTE's binary in the clear.
+  no-plaintext-blob:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: no committed file may be an ELF
+        run: |
+          bad=0
+          while IFS= read -r f; do
+            # A tracked path can be absent from the worktree; skip those rather
+            # than emitting noise from head(1).
+            [ -f "$f" ] || continue
+            case "$(head -c 4 "$f" | xxd -p 2>/dev/null)" in
+              7f454c46)
+                echo "::error file=$f::this is an ELF binary and must not be committed in the clear"
+                bad=1 ;;
+            esac
+          done < <(git ls-files)
+          exit $bad
+
   build:
     runs-on: ubuntu-latest
     permissions:
@@ -118,3 +139,126 @@ jobs:
             ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # The point of the whole harness: prove the concentrator works against the
+  # DEVICE'S OWN CLIENT, not against a client written from the same notes.
+  #
+  # Needs the ICG_BLOB_KEY secret to decrypt emu/blobs/zte_icg_agg.enc. Without
+  # it the job says so and skips rather than failing, so the workflow is useful
+  # before the secret exists.
+  real-device:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: is the blob available?
+        id: blob
+        env:
+          KEY: ${{ secrets.ICG_BLOB_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::notice::ICG_BLOB_KEY is not set, so the real binary cannot be decrypted — skipping"
+            echo "have=no" >> "$GITHUB_OUTPUT"
+          elif [ ! -f emu/blobs/zte_icg_agg.enc ]; then
+            echo "::notice::emu/blobs/zte_icg_agg.enc is not committed yet — skipping"
+            echo "have=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: decrypt the device binary
+        if: steps.blob.outputs.have == 'yes'
+        env:
+          ICG_BLOB_KEY: ${{ secrets.ICG_BLOB_KEY }}
+        run: |
+          go run ./emu/blobcrypt -d -in emu/blobs/zte_icg_agg.enc -out emu/blobs/zte_icg_agg
+          chmod +x emu/blobs/zte_icg_agg
+          # Confirm it is what we think it is, without printing anything from it.
+          file emu/blobs/zte_icg_agg | grep -q 'ELF 64-bit.*aarch64' \
+            || { echo "::error::the decrypted blob is not an aarch64 ELF"; exit 1; }
+          echo "decrypted $(stat -c%s emu/blobs/zte_icg_agg) bytes"
+
+      - uses: docker/setup-qemu-action@v3
+        if: steps.blob.outputs.have == 'yes'
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+        if: steps.blob.outputs.have == 'yes'
+
+      - name: build the harness image
+        if: steps.blob.outputs.have == 'yes'
+        uses: docker/build-push-action@v6
+        with:
+          context: emu
+          platforms: linux/arm64
+          load: true
+          tags: emu:test
+          cache-from: type=gha
+
+      - name: run the concentrator
+        if: steps.blob.outputs.have == 'yes'
+        run: |
+          make icgd
+          # 0.0.0.0 so the container can reach it on the docker0 gateway.
+          ./bin/icgd -tcp :10088 -udp-base 10000 -udp-legs 2 -v -stats 5s \
+            > /tmp/icgd.log 2>&1 &
+          for i in $(seq 1 50); do ss -lnt | grep -q ':10088' && break; sleep 0.2; done
+          ss -lntu | grep -E ':10088|:10000' || { cat /tmp/icgd.log; exit 1; }
+
+      - name: run the DEVICE'S OWN binary against it
+        if: steps.blob.outputs.have == 'yes'
+        run: |
+          # QEMU-emulated aarch64 and a heavily threaded binary: give it room.
+          timeout 180 docker run --rm --platform linux/arm64 \
+            --cap-add NET_ADMIN --cap-add NET_RAW \
+            -e SERVER_IP=172.17.0.1 -e TCP_PORT=10088 -e UDP_BASE=10000 \
+            -v "$PWD/emu/blobs/zte_icg_agg:/opt/icg/zte_icg_agg:ro" \
+            emu:test > /tmp/device.log 2>&1 || true
+          echo "=========== the device's own log ==========="
+          tail -80 /tmp/device.log
+
+      - name: the device must reach ICG_AND_SRV_BOTH_OK
+        if: steps.blob.outputs.have == 'yes'
+        run: |
+          fail=0
+          check() {
+            if grep -qF "$1" /tmp/device.log; then
+              echo "  ok   $2"
+            else
+              echo "::error::$2 — not found in the device log"
+              fail=1
+            fi
+          }
+          # These are the device's own words, from its own state machine.
+          check 'start send handshake with config'  'the client sent ICG_HANDSHAKE_REQ_WITH_CONFIG'
+          check 'update ICG_SERVER_READY'           'the client accepted our ICG_SERVER_HANDSHAKE_ACK'
+          check 'ICG_AND_SRV_BOTH_OK'               'the client reached ICG_AND_SRV_BOTH_OK'
+          check 'icg_agg_status = 1'                'the client declared the tunnel up'
+          if grep -q 'agg_server_exit' /tmp/device.log; then
+            echo "::error::the client's zombie watchdog gave up on us"
+            fail=1
+          fi
+          exit $fail
+
+      - name: and our side must agree
+        if: steps.blob.outputs.have == 'yes'
+        run: |
+          grep -q 'handshake complete' /tmp/icgd.log \
+            || { echo "::error::the concentrator never completed a handshake"; tail -40 /tmp/icgd.log; exit 1; }
+          echo "  ok   the concentrator logged a completed handshake"
+          if grep -q 'magic-mismatch\|framing-lost' /tmp/icgd.log; then
+            echo "::error::the concentrator reported a framing problem"
+            grep 'magic-mismatch\|framing-lost' /tmp/icgd.log
+            exit 1
+          fi
+
+      - name: logs
+        if: always() && steps.blob.outputs.have == 'yes'
+        run: |
+          echo "=== concentrator ==="; tail -80 /tmp/icgd.log || true

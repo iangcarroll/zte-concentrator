@@ -1,3 +1,0 @@
-# The proprietary device binary is never committed.
-blobs/*
-!blobs/.gitkeep

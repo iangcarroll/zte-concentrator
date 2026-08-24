@@ -9,7 +9,7 @@ UDP_BASE  ?= 10000
 
 IMAGE_REMOTE ?= ghcr.io/iangcarroll/zte-coord/emu:main
 
-.PHONY: build pull run shell imports contract clean
+.PHONY: build pull run shell imports contract encrypt decrypt keygen clean
 
 build:
 	docker build --platform linux/arm64 -t $(IMAGE) .
@@ -22,7 +22,7 @@ pull:
 
 # NET_ADMIN for the dummy links and iptables; /dev/net/tun for the UDP/ICMP path.
 run:
-	@test -f $(BLOB) || { echo "put zte_icg_agg in $(BLOB) first (see README)"; exit 2; }
+	@test -f $(BLOB) || { echo "no $(BLOB) — run 'make decrypt', or see README"; exit 2; }
 	docker run --rm -it --platform linux/arm64 \
 	  --cap-add NET_ADMIN --cap-add NET_RAW \
 	  --device /dev/net/tun \
@@ -46,6 +46,24 @@ imports:
 # Regenerate the CI contract from the real binary.
 contract:
 	./refresh-contract.sh $(BLOB)
+
+# --- the encrypted blob -----------------------------------------------------
+# The binary is ZTE's, so the repo holds only ciphertext; the key lives in the
+# ICG_BLOB_KEY Actions secret and in your password manager. See README.
+CRYPT = go run ../emu/blobcrypt
+
+keygen:
+	@cd .. && $(CRYPT) -keygen
+
+encrypt:
+	@test -f $(BLOB) || { echo "no plaintext at $(BLOB)"; exit 2; }
+	cd .. && $(CRYPT) -e -in emu/$(BLOB) -out emu/$(BLOB).enc
+	@echo "wrote $(BLOB).enc — commit that, never $(BLOB)"
+
+decrypt:
+	@test -f $(BLOB).enc || { echo "no $(BLOB).enc to decrypt"; exit 2; }
+	cd .. && $(CRYPT) -d -in emu/$(BLOB).enc -out emu/$(BLOB)
+	@echo "wrote $(BLOB) (gitignored)"
 
 clean:
 	docker rmi $(IMAGE) 2>/dev/null || true

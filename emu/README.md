@@ -38,12 +38,51 @@ r2 -q -c ii /path/to/zte_icg_agg | grep -vE 'libc|GLIBC'
 
 ## Use it
 
-The proprietary binary is deliberately **not** in this repo. Get it from the
-device (`adb pull /usr/bin/zte_icg_agg`) or from the private `zte` repo's
-`research/firmware/icg/`, and drop it in `blobs/`:
+## The binary, and why it is encrypted
+
+`zte_icg_agg` is ZTE's. Committing it — even to a private repo — means the
+repository distributes it, and a private repo can be made public by accident. So
+the repo holds only `blobs/zte_icg_agg.enc`: AES-256-GCM, key in the
+`ICG_BLOB_KEY` Actions secret and in your password manager, nowhere else.
+
+That is not security theatre for its own sake. It is what lets CI run the real
+binary: the runner decrypts into its own filesystem, uses it, and throws it
+away. Without that, the one test that actually matters can never be automated.
+
+Set it up once:
 
 ```sh
-cp /path/to/zte_icg_agg blobs/
+make -C emu keygen                 # a 43-char random key; save it somewhere real
+export ICG_BLOB_KEY=<that key>
+cp /path/to/zte_icg_agg emu/blobs/
+make -C emu encrypt                # writes blobs/zte_icg_agg.enc
+git add emu/blobs/zte_icg_agg.enc  # the plaintext is gitignored and CI rejects it
+
+gh secret set ICG_BLOB_KEY --repo <owner>/<repo>   # so the runner can decrypt
+```
+
+Afterwards, on any machine:
+
+```sh
+export ICG_BLOB_KEY=<that key>
+make -C emu decrypt
+```
+
+`blobcrypt` is ~200 lines of stdlib Go — no dependencies, so it runs the same on
+a laptop and on a bare runner. Wrong key, tampered blob, truncated blob and
+"you handed me the plaintext by mistake" all fail loudly with the reason, rather
+than producing something that looks like a binary.
+
+Git LFS is **not** used and is not worth it here: the blob is 321 KB, which git
+handles without complaint, and LFS would add a checkout step, a quota and a
+second place for the bytes to live. (It would earn its keep for something like
+the 159 MB `modem.elf` in the `zte` repo — not for this.)
+
+## Use it
+
+```sh
+export ICG_BLOB_KEY=<your key>
+make -C emu decrypt
 make pull            # CI already built it; this is much faster than `make build`
 
 # In one terminal: the concentrator. --http on all interfaces so the container
@@ -113,11 +152,26 @@ The two contract files (`etc/expected-imports.txt`, `etc/expected-libs.txt`) are
 what CI asserts against, and `./refresh-contract.sh /path/to/zte_icg_agg`
 regenerates them from the binary so they cannot drift from it silently.
 
-**Not yet verified:** the harness has never been *run* against the real binary
-end to end — CI cannot, because the blob is not in the repo, and the connection
-this was written on could not build the image locally. Treat the runtime
-behaviour as designed-but-unexercised until someone does
-`make pull && make run` and sees `ICG_AND_SRV_BOTH_OK`.
+**Run in CI, once the secret exists.** The `real-device` job in
+`.github/workflows/emu.yml` decrypts the blob, starts a concentrator, runs the
+device's own binary against it under QEMU, and then asserts on the device's own
+words:
+
+| assertion | the device's log line |
+|---|---|
+| the client sent its handshake | `start send handshake with config` |
+| it accepted our ack | `update ICG_SERVER_READY` |
+| it reached the final state | `ICG_AND_SRV_BOTH_OK` |
+| it declared the tunnel up | `icg_agg_status = 1` |
+| its watchdog did not give up | absence of `agg_server_exit` |
+
+and cross-checks our side for `handshake complete` and the absence of any
+`magic-mismatch` or `framing-lost` notice. If that job is green, the protocol
+reading is right — not merely self-consistent.
+
+**Not yet verified:** that job has not run. It needs `ICG_BLOB_KEY` set and
+`blobs/zte_icg_agg.enc` committed, and it has never executed. Treat the runtime
+behaviour as designed-but-unexercised until it is green.
 
 ## What this does and does not prove
 
