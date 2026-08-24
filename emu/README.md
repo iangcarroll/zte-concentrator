@@ -173,6 +173,29 @@ reading is right — not merely self-consistent.
 `blobs/zte_icg_agg.enc` committed, and it has never executed. Treat the runtime
 behaviour as designed-but-unexercised until it is green.
 
+## The device ships with logging off
+
+Worth knowing before you try to diagnose anything, on the emulator or on real
+hardware. `icg.conf` says, in ZTE's own words:
+
+```
+#日志等级：0-无，1-错误，2-警告，3-信息，4-调试
+ICGLogLevel=0
+```
+
+"Log level: 0=none, 1=error, 2=warning, 3=info, 4=debug" — and it ships at
+**0**. Every interesting message in the binary is guarded by a level check that
+requires 3 or higher, so a stock device emits nothing at all about its own state
+machine. It is not that the device is bad at reporting problems; it is that
+reporting is switched off.
+
+That cost three runs of this harness. The log always stopped at the exact line
+where the config is applied, and everything visible before it was the built-in
+default verbosity from before `ICGLogLevel` had been read.
+
+This repo's copy sets `ICGLogLevel=4`. On real hardware, set it before you try
+to work out why a tunnel will not come up.
+
 ## What this does and does not prove
 
 **Does:** that the real client accepts our handshake, agrees on the framing,
