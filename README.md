@@ -19,6 +19,27 @@ The protocol was recovered from the device's own binary and a live capture. It
 is documented in [`docs/PROTOCOL.md`](docs/PROTOCOL.md), which tags every claim
 **PROVEN** or **INFERRED**.
 
+## ⚠️ This repo was written by an AI
+
+Every line of code, every document and every commit message here was produced by
+Claude (Anthropic) working from the reverse-engineered protocol, under human
+direction and review. That has two consequences worth stating plainly:
+
+- **Treat it as unreviewed by a human expert until you have reviewed it.** It
+  builds, `go vet` is clean, `go test -race` passes, and it has been deployed to
+  three Linux distributions and driven end-to-end over the internet — but none of
+  that is the same as someone who knows this problem domain having read it.
+- **The protocol itself is an interpretation.** It was recovered from a stripped
+  binary and one 8.5-second packet capture. [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
+  marks every claim **PROVEN** or **INFERRED** for exactly this reason, and
+  [`docs/STATUS.md`](docs/STATUS.md) is candid about the largest remaining risk:
+  the client used to validate the server was written from the same notes as the
+  server, so a misreading would be reproduced on both sides and pass anyway.
+
+If you are going to point a real device at this, read
+[`docs/OPERATING.md`](docs/OPERATING.md) first — getting it wrong cuts the
+device's LAN off by design.
+
 ## Quick start
 
 ```sh
