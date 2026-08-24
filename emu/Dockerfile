@@ -21,15 +21,14 @@ FROM alpine:3.20
 #     purely so the file exists.
 #   * busybox provides ip, ifconfig, route and sysctl, which is what the
 #     binary shells out to.
-#   * iptables is genuinely missing, so the transparent-proxy DNAT rule fails.
-#     That is logged rather than hidden; set WANT_IPTABLES=1 and rebuild with
-#     network access if you need the proxy path.
-# This keeps the image buildable on a bad link, which is the situation it was
-# written in.
-# binutils gives us nm, which CI uses to assert the shim still covers every
-# symbol the binary imports. EXTRA_PKGS is for anything else you want (iptables
-# for the transparent-proxy path, iproute2 for richer `ip` support).
-ARG EXTRA_PKGS="binutils"
+# Everything else the binary shells out to is in busybox.
+# The binary shells out to iptables and to `ip`, and busybox's `ip` cannot do
+# rules or dummy links properly. binutils gives CI the `nm` it uses to assert
+# the shim still covers every import.
+#
+# Pass EXTRA_PKGS="" to build with no package installs at all — useful on a
+# connection too poor for apk, at the cost of the transparent-proxy path.
+ARG EXTRA_PKGS="binutils iptables iproute2"
 RUN if [ -n "$EXTRA_PKGS" ]; then apk add --no-cache $EXTRA_PKGS; fi
 
 COPY --from=build /libzteshim.so /usr/lib/libzteshim.so

@@ -211,12 +211,23 @@ jobs:
           for i in $(seq 1 50); do ss -lnt | grep -q ':10088' && break; sleep 0.2; done
           ss -lntu | grep -E ':10088|:10000' || { cat /tmp/icgd.log; exit 1; }
 
+      - name: /dev/net/tun must exist
+        if: steps.blob.outputs.have == 'yes'
+        run: |
+          # zte_icg_agg creates tun0 before anything else and exits if it
+          # cannot, so this is a hard prerequisite rather than a nicety.
+          sudo modprobe tun 2>/dev/null || true
+          ls -l /dev/net/tun
+
       - name: run the DEVICE'S OWN binary against it
         if: steps.blob.outputs.have == 'yes'
         run: |
           # QEMU-emulated aarch64 and a heavily threaded binary: give it room.
+          # NET_ADMIN for tun0 and the dummy links, NET_RAW for the iptables
+          # rules the transparent proxy installs.
           timeout 180 docker run --rm --platform linux/arm64 \
             --cap-add NET_ADMIN --cap-add NET_RAW \
+            --device /dev/net/tun \
             -e SERVER_IP=172.17.0.1 -e TCP_PORT=10088 -e UDP_BASE=10000 \
             -v "$PWD/emu/blobs/zte_icg_agg:/opt/icg/zte_icg_agg:ro" \
             emu:test > /tmp/device.log 2>&1 || true

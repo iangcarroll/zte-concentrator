@@ -68,10 +68,14 @@ if ! grep -q usb0_RT /etc/iproute2/rt_tables 2>/dev/null; then
   echo "110 tun0_RT" >> /etc/iproute2/rt_tables
 fi
 
-# tun0. The device sends tunnelled UDP and ICMP over it; without the device node
-# the data plane starts but that path stays dead.
+# tun0 is not optional. The device creates it before anything else and exits if
+# it cannot ("[TUN] create tun/tap device tun0 failed"), so fail here with a
+# useful message instead of letting the binary die opaquely.
 if [ ! -c /dev/net/tun ]; then
-  say "WARNING: no /dev/net/tun — pass --device /dev/net/tun for the UDP/ICMP path"
+  say "FATAL: /dev/net/tun is missing, and zte_icg_agg exits without it."
+  say "       docker run needs: --device /dev/net/tun --cap-add NET_ADMIN"
+  say "       (on a host that lacks it: sudo modprobe tun)"
+  exit 3
 fi
 
 # Loosen the same sysctls the device's own startup does.
