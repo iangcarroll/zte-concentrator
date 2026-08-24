@@ -9,3 +9,6 @@ bin/
 # be committed either. The canonical location is emu/blobs/icg_blob_key.
 icg_blob_key
 *.key
+
+# Local deployment secrets and server details (API keys, addresses).
+deploy/*.env
