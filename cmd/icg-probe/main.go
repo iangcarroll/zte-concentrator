@@ -35,17 +35,21 @@ var (
 
 func main() {
 	var (
-		server   = flag.String("server", "", "concentrator TCP tunnel, host:port (required)")
-		udpAddr  = flag.String("udp", "", "concentrator first UDP tunnel, host:port (empty skips the UDP checks)")
-		tcpLegs  = flag.Int("legs", 2, "TCP tunnel legs to open, i.e. how many WANs to pretend to have")
-		udpLegs  = flag.Int("udp-legs", 2, "UDP tunnel legs to open")
-		magicStr = flag.String("magic", fmt.Sprintf("%x", icg.DefaultMagic), "TunnelIdentifier, hex")
-		icgID    = flag.String("icg-id", "172.16.25.18", "AggregationServerIcgId, as a dotted quad — the session key")
-		clientIP = flag.String("client-tun-ip", "172.16.25.19", "the device's own tun0 address")
-		mac      = flag.String("mac", "02:00:5e:10:00:01", "device MAC, the identity the handshake carries")
-		fetch    = flag.String("fetch", "", "fetch this http:// URL through the tunnel to prove the data path")
-		timeout  = flag.Duration("timeout", 20*time.Second, "per-check timeout")
-		verboseF = flag.Bool("v", false, "log every frame")
+		server    = flag.String("server", "", "concentrator TCP tunnel, host:port (required)")
+		udpAddr   = flag.String("udp", "", "concentrator first UDP tunnel, host:port (empty skips the UDP checks)")
+		tcpLegs   = flag.Int("legs", 2, "TCP tunnel legs to open, i.e. how many WANs to pretend to have")
+		udpLegs   = flag.Int("udp-legs", 2, "UDP tunnel legs to open")
+		magicStr  = flag.String("magic", fmt.Sprintf("%x", icg.DefaultMagic), "TunnelIdentifier, hex")
+		icgID     = flag.String("icg-id", "172.16.25.18", "AggregationServerIcgId, as a dotted quad — the session key")
+		clientIP  = flag.String("client-tun-ip", "172.16.25.19", "the device's own tun0 address")
+		mac       = flag.String("mac", "02:00:5e:10:00:01", "device MAC, the identity the handshake carries")
+		fetch     = flag.String("fetch", "", "fetch this http:// URL through the tunnel to prove the data path")
+		bench     = flag.String("benchmark", "", "download this http:// URL through the tunnel and report sustained throughput")
+		benchLen  = flag.Int64("benchmark-bytes", 0, "minimum response bytes expected from -benchmark")
+		benchMin  = flag.Float64("benchmark-min-mbps", 0, "fail if -benchmark throughput is below this many Mbit/s")
+		benchRuns = flag.Int("benchmark-runs", 1, "number of sequential -benchmark downloads")
+		timeout   = flag.Duration("timeout", 20*time.Second, "per-check timeout")
+		verboseF  = flag.Bool("v", false, "log every frame")
 	)
 	flag.Parse()
 	verbose = *verboseF
@@ -54,6 +58,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-server is required, e.g. -server 1.2.3.4:10088")
 		flag.Usage()
 		os.Exit(2)
+	}
+	if *bench != "" && *benchLen <= 0 {
+		fatal("-benchmark needs a positive -benchmark-bytes value")
+	}
+	if *benchMin < 0 {
+		fatal("-benchmark-min-mbps cannot be negative")
+	}
+	if *benchRuns <= 0 {
+		fatal("-benchmark-runs must be positive")
+	}
+	if *benchRuns > 10_000 {
+		fatal("-benchmark-runs cannot exceed 10000")
 	}
 
 	lvl := slog.LevelWarn
@@ -160,6 +176,15 @@ func main() {
 		skip("striping", "needs -legs 2 or more")
 	}
 
+	// --- sustained throughput over the complete tunnel path ----------------
+	if *bench == "" {
+		skip("throughput", "no -benchmark URL given")
+	} else {
+		for run := 1; run <= *benchRuns; run++ {
+			probeThroughput(c, *bench, *benchLen, *benchMin, *timeout, run, *benchRuns)
+		}
+	}
+
 	// --- cumulative ACKs ---------------------------------------------------
 	if c.Stats.CumulativeAcks.Load() > 0 {
 		pass("cumulative-ack", "%d received, so the device could free its send stash",
@@ -178,6 +203,71 @@ func main() {
 	if nFail > 0 {
 		os.Exit(1)
 	}
+}
+
+// probeThroughput downloads a large HTTP response through the ICG data path.
+// It counts unique protocol payload bytes rather than retaining/reassembling
+// the body, keeping memory bounded for multi-hundred-megabyte tests.
+func probeThroughput(c *client.Client, raw string, atLeast int64, minMbps float64, timeout time.Duration, run, runs int) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" {
+		fail("throughput", "-benchmark needs an http:// URL, got %q", raw)
+		return
+	}
+	host := u.Hostname()
+	port := u.Port()
+	if port == "" {
+		port = "80"
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		fail("throughput", "cannot resolve %s: %v", host, err)
+		return
+	}
+	var v4 netip.Addr
+	for _, ip := range ips {
+		if a, ok := netip.AddrFromSlice(ip.To4()); ok && a.Is4() {
+			v4 = a
+			break
+		}
+	}
+	if !v4.IsValid() {
+		fail("throughput", "%s has no IPv4 address", host)
+		return
+	}
+	var p uint16
+	fmt.Sscanf(port, "%d", &p)
+	server := netip.AddrPortFrom(v4, p)
+	lanClient := netip.AddrPortFrom(netip.MustParseAddr("192.168.0.247"), uint16(54322+run))
+
+	flow, err := c.OpenFlow(lanClient, server)
+	if err != nil {
+		fail("throughput", "open flow: %v", err)
+		return
+	}
+	defer flow.Close()
+	request := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: icg-probe\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n", u.RequestURI(), host)
+	started := time.Now()
+	if err := flow.Write([]byte(request), 0); err != nil {
+		fail("throughput", "write request: %v", err)
+		return
+	}
+	got, err := c.CountFlowData(flow.Tuple(), timeout, atLeast)
+	elapsed := time.Since(started)
+	if err != nil {
+		fail("throughput", "%v", err)
+		return
+	}
+	mbps := float64(got*8) / elapsed.Seconds() / 1_000_000
+	label := "throughput"
+	if runs > 1 {
+		label = fmt.Sprintf("throughput-%d/%d", run, runs)
+	}
+	if mbps < minMbps {
+		fail(label, "%.1f Mbit/s over %s (%d bytes), below %.1f Mbit/s", mbps, elapsed.Round(time.Millisecond), got, minMbps)
+		return
+	}
+	pass(label, "%.1f Mbit/s over %s (%d bytes through the tunnel)", mbps, elapsed.Round(time.Millisecond), got)
 }
 
 // probeFetch does a real HTTP GET through the tunnel. This is the check that
