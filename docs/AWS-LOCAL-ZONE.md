@@ -97,6 +97,12 @@ This is end-to-end: a slow client access network will cap the result even when
 the EC2 instance has spare capacity. Use a client connection known to exceed
 the target before treating a failure as an instance-sizing result.
 
+The deployed `t3.medium` was validated on 2026-08-25 from a temporary
+`us-west-2` EC2 client. Five sequential responses of approximately 100 MB each
+passed through three ICG TCP legs and measured 717, 591, 863, 840, and 858
+Mbit/s. All protocol checks passed with no framing resyncs or dropped input. The
+temporary client stack was deleted after the test.
+
 The observability UI remains on loopback. Use Session Manager port forwarding
 instead of opening another public listener.
 
