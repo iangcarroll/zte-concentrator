@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iangcarroll/zte-coord/icg"
+	"github.com/iangcarroll/zte-concentrator/icg"
 )
 
 // startObs brings up a concentrator plus its observability server on ephemeral

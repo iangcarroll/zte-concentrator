@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iangcarroll/zte-coord/icg"
-	"github.com/iangcarroll/zte-coord/icg/client"
+	"github.com/iangcarroll/zte-concentrator/icg"
+	"github.com/iangcarroll/zte-concentrator/icg/client"
 )
 
 var (

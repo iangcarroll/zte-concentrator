@@ -128,7 +128,7 @@ fi
 unit=$(cat <<UNITEOF
 [Unit]
 Description=ICG multi-WAN bonding concentrator (self-hosted)
-Documentation=https://github.com/iangcarroll/zte-coord/blob/main/docs/PROTOCOL.md
+Documentation=https://github.com/iangcarroll/zte-concentrator/blob/main/docs/PROTOCOL.md
 After=network-online.target
 Wants=network-online.target
 

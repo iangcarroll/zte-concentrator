@@ -35,7 +35,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iangcarroll/zte-coord/icg"
+	"github.com/iangcarroll/zte-concentrator/icg"
 )
 
 // Config configures a Server. Zero values are filled in with defaults that

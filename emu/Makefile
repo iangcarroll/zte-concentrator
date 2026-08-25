@@ -14,7 +14,7 @@ SERVER_IP ?= 172.17.0.1
 TCP_PORT  ?= 10088
 UDP_BASE  ?= 10000
 
-IMAGE_REMOTE ?= ghcr.io/iangcarroll/zte-coord/emu:main
+IMAGE_REMOTE ?= ghcr.io/iangcarroll/zte-concentrator/emu:main
 
 .PHONY: build pull run shell imports contract encrypt decrypt keygen clean
 

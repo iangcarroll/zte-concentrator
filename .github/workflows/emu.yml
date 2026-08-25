@@ -6,7 +6,7 @@ name: emu
 # takes long enough to be genuinely obstructive.
 #
 # Pull it instead:
-#   docker pull ghcr.io/iangcarroll/zte-coord/emu:main
+#   docker pull ghcr.io/iangcarroll/zte-concentrator/emu:main
 #
 # The proprietary binary is never in the image. Mount it at run time.
 

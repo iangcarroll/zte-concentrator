@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iangcarroll/zte-coord/icg"
+	"github.com/iangcarroll/zte-concentrator/icg"
 )
 
 // The TCP path is a transparent proxy. The client DNATs LAN TCP to the

@@ -168,7 +168,7 @@ once the shim is in place.
 **Built in CI:** `.github/workflows/emu.yml` builds the image on every change,
 asserts that the shim still exports every symbol the binary imports and that
 every `DT_NEEDED` name has a file, checks the entrypoint reaches its exec, and
-publishes to `ghcr.io/iangcarroll/zte-coord/emu:main`. `make pull` fetches that
+publishes to `ghcr.io/iangcarroll/zte-concentrator/emu:main`. `make pull` fetches that
 instead of building locally — which matters, because building means installing a
 compiler into an aarch64 image and that is slow or impossible on a poor link.
 

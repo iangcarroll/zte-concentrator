@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iangcarroll/zte-coord/icg"
+	"github.com/iangcarroll/zte-concentrator/icg"
 )
 
 // These tests drive the concentrator with a fake zte_icg_agg: a client that

@@ -45,8 +45,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/iangcarroll/zte-coord/icg"
-	"github.com/iangcarroll/zte-coord/icg/concentrator"
+	"github.com/iangcarroll/zte-concentrator/icg"
+	"github.com/iangcarroll/zte-concentrator/icg/concentrator"
 )
 
 // Stamped by the linker; see the Makefile and deploy/icgd-deploy.sh. Knowing

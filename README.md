@@ -1,4 +1,4 @@
-# zte-coord
+# zte-concentrator
 
 A self-hosted concentrator for **ZTE's proprietary multi-WAN packet bonding**,
 plus the reverse-engineered protocol it speaks.

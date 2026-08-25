@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/iangcarroll/zte-coord/icg"
+	"github.com/iangcarroll/zte-concentrator/icg"
 )
 
 // Config describes the concentrator to talk to and how many legs to use.

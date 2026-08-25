@@ -6,7 +6,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/iangcarroll/zte-coord/icg"
+	"github.com/iangcarroll/zte-concentrator/icg"
 )
 
 // The UDP path is a NAT, not a proxy. Tunnelled UDP arrives as a complete raw
