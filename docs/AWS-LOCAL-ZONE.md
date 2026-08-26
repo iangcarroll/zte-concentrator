@@ -9,7 +9,8 @@ the concentrator.
 The stack is intentionally isolated:
 
 - a dedicated VPC and Local Zone subnet;
-- one internet gateway and a stable Elastic IP advertised from LAX;
+- one internet gateway and an active BYOIP Elastic IP advertised from LAX;
+- one unassociated Amazon Elastic IP retained for rollback;
 - no SSH ingress; management uses AWS Systems Manager Session Manager;
 - only TCP `10088` and UDP `10000-10003` are admitted;
 - a required device-MAC allowlist;
@@ -17,9 +18,12 @@ The stack is intentionally isolated:
 - T3 CPU credits use `standard`, avoiding unlimited-mode credit charges; and
 - the 8 GB encrypted root volume uses `gp3`.
 
-The bootstrap checks out and builds an exact, GitHub-reachable 40-character
-commit. A branch name is deliberately not accepted: knowing which binary is
-live matters more than following `main` automatically.
+An SSM State Manager association checks out, builds, and deploys an exact,
+GitHub-reachable 40-character commit after the BYOIP address is attached. It
+runs again when `SourceCommit` or the device allowlist changes, so a stack
+update changes the running service instead of only changing EC2 UserData. A
+branch name is deliberately not accepted: knowing which binary is live matters
+more than following `main` automatically.
 
 ## Graviton availability
 
@@ -62,16 +66,23 @@ AWS_PROFILE=cautela aws cloudformation deploy \
 ```
 
 Creating the stack does not touch a device. The device's coordinator override
-and physical aggregation switch remain separate actions.
+and physical aggregation switch remain separate actions. The active address is
+allocated from IPAM pool `ipam-pool-0fc5e500657ae31b5` in network border group
+`us-west-2-lax-1`; the Amazon-provided address stays unassociated so it can be
+reassociated if rollback is needed.
 
 ## Verify
 
-Get the instance and public IP without printing the MAC allowlist parameter:
+Get the instance, active BYOIP address, and retained rollback address without
+printing the MAC allowlist parameter:
 
 ```sh
-instance_id=$(AWS_PROFILE=cautela aws cloudformation describe-stacks \
+read -r instance_id public_ip rollback_ip <<EOF
+$(AWS_PROFILE=cautela aws cloudformation describe-stacks \
   --region us-west-2 --stack-name zte-concentrator-lax \
-  --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' --output text)
+  --query 'Stacks[0].[Outputs[?OutputKey==`InstanceId`].OutputValue | [0], Outputs[?OutputKey==`PublicIp`].OutputValue | [0], Outputs[?OutputKey==`RollbackPublicIp`].OutputValue | [0]]' \
+  --output text)
+EOF
 
 AWS_PROFILE=cautela aws ec2 describe-instances --region us-west-2 \
   --instance-ids "$instance_id" \
@@ -81,6 +92,13 @@ AWS_PROFILE=cautela aws ssm send-command --region us-west-2 \
   --instance-ids "$instance_id" --document-name AWS-RunShellScript \
   --parameters 'commands=["systemctl is-active icgd","icgd -version","ss -lntu"]'
 ```
+
+CloudFormation drift detection can report
+`NetworkInterfaces/0/AssociatePublicIpAddress` as `true` while the template says
+`false`: EC2 exposes the attached EIP as a public association even though the
+instance launch flag was disabled. Do not change that launch-only field to
+silence drift; changing `NetworkInterfaces` replaces the instance and its ENI.
+The two `AWS::EC2::EIP` resources should remain `IN_SYNC`.
 
 For a sustained test through the ICG framing, reassembly, and proxy path, use a
 large plain-HTTP object whose exact size is known:
@@ -113,16 +131,22 @@ At the catalog prices checked on 2026-08-25, the default stack is approximately
 
 - `t3.medium`: `$36.43/month` at 730 hours;
 - 8 GB `gp3`: `$0.77/month`; and
-- one public IPv4: approximately `$3.65/month`.
+- the retained Amazon-provided public IPv4: approximately `$3.65/month`.
 
-Internet egress and any T3 surplus CPU credits are billed separately. Delete
-the whole experiment with one stack operation:
+AWS does not charge the public IPv4 hourly fee for the active BYOIP address.
+Internet egress and any T3 surplus CPU credits are billed separately.
+
+Deleting the stack removes the compute and network resources but deliberately
+retains both Elastic IP allocations:
 
 ```sh
 AWS_PROFILE=cautela aws cloudformation delete-stack \
   --region us-west-2 --stack-name zte-concentrator-lax
 ```
 
-CloudFormation owns the instance, volume, Elastic IP, security group, subnet,
-routes, internet gateway, VPC, and IAM role/profile so teardown does not depend
-on reconstructing individually created resources.
+CloudFormation manages the instance, volume, both Elastic IPs, security group,
+subnet, routes, internet gateway, VPC, and IAM role/profile while the stack
+exists. The two Elastic IP resources use both `DeletionPolicy: Retain` and
+`UpdateReplacePolicy: Retain`, so neither address is released by a stack
+deletion or replacement. Release or reuse retained addresses only as a
+separate, explicit operation.
