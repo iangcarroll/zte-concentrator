@@ -556,6 +556,61 @@ func (c *Client) CollectFlowData(flow icg.Flow, timeout time.Duration, done func
 	}
 }
 
+// CountFlowData counts unique downlink payload bytes for one flow without
+// retaining the payload. It is intended for sustained-throughput probes where
+// CollectFlowData's full reassembly would consume memory proportional to the
+// download size. It retains only the sequence numbers needed to reject
+// retransmitted frames. Sequence numbers are global and frames can arrive on
+// any leg, so ordering is deliberately irrelevant.
+func (c *Client) CountFlowData(flow icg.Flow, timeout time.Duration, atLeast int64) (int64, error) {
+	if atLeast <= 0 {
+		return 0, fmt.Errorf("atLeast must be positive, got %d", atLeast)
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	seen := make(map[uint32]struct{})
+	var total int64
+	closed := false
+	for {
+		select {
+		case r := <-c.Frames:
+			if r.Frame.Type != icg.TypeTCPDown {
+				continue
+			}
+			b, err := icg.ParseTCPBody(r.Frame.Body)
+			if err != nil {
+				continue
+			}
+			// A downlink frame carries the tuple server-first, so flip it back.
+			if (icg.Flow{Client: b.Dst, Server: b.Src}) != flow {
+				continue
+			}
+			switch b.Opcode {
+			case icg.TCPPayload:
+				if _, ok := seen[b.Seq]; ok {
+					continue
+				}
+				seen[b.Seq] = struct{}{}
+				total += int64(len(b.Data))
+				if total >= atLeast {
+					return total, nil
+				}
+			case icg.TCPDisconnect:
+				// The disconnect can arrive before an earlier payload striped over
+				// another leg. Remember it, but keep collecting until the target or
+				// timeout rather than reporting a false short read immediately.
+				closed = true
+			}
+		case <-timer.C:
+			if closed {
+				return total, fmt.Errorf("flow closed after %d bytes, wanted at least %d", total, atLeast)
+			}
+			return total, fmt.Errorf("timed out after %s with %d bytes, wanted at least %d", timeout, total, atLeast)
+		}
+	}
+}
+
 // seqNote describes what we are holding, so a timeout says something useful
 // rather than just "0 bytes".
 func seqNote(frames map[uint32][]byte) string {

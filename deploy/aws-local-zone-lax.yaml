@@ -1,0 +1,303 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Isolated AWS Local Zone deployment for the ZTE ICG concentrator in Los
+  Angeles. Creates one VPC, internet gateway, Local Zone subnet, EC2 instance,
+  active BYOIP Elastic IP, retained rollback Elastic IP, security group, and
+  SSM instance role.
+
+Parameters:
+  SourceCommit:
+    Type: String
+    AllowedPattern: "^[0-9a-f]{40}$"
+    Description: Exact, GitHub-reachable zte-concentrator commit to build and run.
+  AllowedDevices:
+    Type: String
+    NoEcho: true
+    AllowedPattern: "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}(,([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})*$"
+    Description: >-
+      Comma-separated ICG handshake MAC allowlist. This is admission control,
+      not authentication; the protocol carries the MAC in plaintext.
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - t3.2xlarge
+    Description: Burstable x86 instance types offered in both Los Angeles Local Zones.
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Amazon Linux 2023 x86_64 AMI resolved in us-west-2.
+  LocalZone:
+    Type: String
+    Default: us-west-2-lax-1a
+    AllowedValues:
+      - us-west-2-lax-1a
+      - us-west-2-lax-1b
+  VpcCidr:
+    Type: String
+    Default: 10.88.0.0/16
+  LocalZoneSubnetCidr:
+    Type: String
+    Default: 10.88.1.0/24
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: zte-concentrator-lax
+        - Key: Project
+          Value: zte-concentrator
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: zte-concentrator-lax
+        - Key: Project
+          Value: zte-concentrator
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  LocalZoneSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Ref LocalZone
+      CidrBlock: !Ref LocalZoneSubnetCidr
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: zte-concentrator-lax
+        - Key: Project
+          Value: zte-concentrator
+
+  LocalZoneRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: zte-concentrator-lax
+        - Key: Project
+          Value: zte-concentrator
+
+  LocalZoneDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      GatewayId: !Ref InternetGateway
+      DestinationCidrBlock: 0.0.0.0/0
+      RouteTableId: !Ref LocalZoneRouteTable
+
+  LocalZoneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref LocalZoneRouteTable
+      SubnetId: !Ref LocalZoneSubnet
+
+  ConcentratorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ZTE ICG tunnel listeners from cellular WAN addresses
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - Description: ICG TCP tunnel
+          IpProtocol: tcp
+          FromPort: 10088
+          ToPort: 10088
+          CidrIp: 0.0.0.0/0
+        - Description: ICG UDP tunnel legs
+          IpProtocol: udp
+          FromPort: 10000
+          ToPort: 10003
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - Description: Proxied traffic and AWS management endpoints
+          IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: zte-concentrator-lax
+        - Key: Project
+          Value: zte-concentrator
+
+  ConcentratorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub zte-concentrator-lax-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Project
+          Value: zte-concentrator
+
+  ConcentratorInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub zte-concentrator-lax-${AWS::Region}
+      Roles:
+        - !Ref ConcentratorRole
+
+  ConcentratorInstance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - LocalZoneDefaultRoute
+      - LocalZoneRouteTableAssociation
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref ConcentratorInstanceProfile
+      CreditSpecification:
+        CPUCredits: standard
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        InstanceMetadataTags: enabled
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref ConcentratorSecurityGroup
+          SubnetId: !Ref LocalZoneSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: 8
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: zte-concentrator-lax
+        - Key: Project
+          Value: zte-concentrator
+        - Key: SourceCommit
+          Value: !Ref SourceCommit
+
+  ConcentratorElasticIp:
+    Type: AWS::EC2::EIP
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Domain: vpc
+      NetworkBorderGroup: us-west-2-lax-1
+      Tags:
+        - Key: Name
+          Value: zte-concentrator-lax
+        - Key: Project
+          Value: zte-concentrator
+
+  ConcentratorByoipElasticIp:
+    Type: AWS::EC2::EIP
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref ConcentratorInstance
+      IpamPoolId: ipam-pool-0fc5e500657ae31b5
+      NetworkBorderGroup: us-west-2-lax-1
+      Tags:
+        - Key: Name
+          Value: zte-concentrator-lax
+        - Key: Project
+          Value: zte-concentrator
+
+  ConcentratorDeployment:
+    Type: AWS::SSM::Association
+    DependsOn: ConcentratorByoipElasticIp
+    Properties:
+      AssociationName: zte-concentrator-lax-deploy
+      Name: AWS-RunShellScript
+      Targets:
+        - Key: InstanceIds
+          Values:
+            - !Ref ConcentratorInstance
+      Parameters:
+        commands:
+          - !Sub |
+              set -eu
+
+              # The BYOIP EIP is associated before this association runs.
+              # Still retry package installation while routing and DNS settle.
+              attempt=0
+              until dnf install -y git golang; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 24 ]; then
+                  exit 1
+                fi
+                sleep 5
+              done
+
+              rm -rf /opt/zte-concentrator-src
+              git clone --filter=blob:none https://github.com/iangcarroll/zte-concentrator.git /opt/zte-concentrator-src
+              git -C /opt/zte-concentrator-src fetch --depth 1 origin ${SourceCommit}
+              git -C /opt/zte-concentrator-src checkout --detach ${SourceCommit}
+
+              cd /opt/zte-concentrator-src
+              version=$(git describe --tags --always)
+              build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+              install -d -m 0700 /root/go /root/.cache/go-build
+              GOPATH=/root/go GOCACHE=/root/.cache/go-build \
+                GOTOOLCHAIN=auto GOSUMDB=sum.golang.org \
+                CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+                -ldflags "-s -w -X main.version=$version -X main.buildTime=$build_time" \
+                -o /tmp/icgd.staged ./cmd/icgd
+
+              mode=install
+              if [ -x /usr/local/bin/icgd ]; then
+                mode=update
+              fi
+              ICGD_MODE="$mode" \
+              ICGD_STAGED=/tmp/icgd.staged \
+              ICGD_WRITE_ENV=1 \
+              ICGD_OPEN_FW=0 \
+              ICGD_ARGS='-tcp :10088 -udp-base 10000 -udp-legs 4 -magic 12345678 -deny 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,169.254.0.0/16,::1/128 -devices ${AllowedDevices} -http 127.0.0.1:10099 -stats 30s' \
+                sh deploy/icgd-install.sh
+
+              systemctl is-active --quiet icgd
+              /usr/local/bin/icgd -version
+      WaitForSuccessTimeoutSeconds: 900
+
+Outputs:
+  InstanceId:
+    Value: !Ref ConcentratorInstance
+  PublicIp:
+    Value: !Ref ConcentratorByoipElasticIp
+  PublicIpAllocationId:
+    Value: !GetAtt ConcentratorByoipElasticIp.AllocationId
+  RollbackPublicIp:
+    Value: !Ref ConcentratorElasticIp
+  RollbackPublicIpAllocationId:
+    Value: !GetAtt ConcentratorElasticIp.AllocationId
+  VpcId:
+    Value: !Ref Vpc
+  SubnetId:
+    Value: !Ref LocalZoneSubnet
+  SecurityGroupId:
+    Value: !Ref ConcentratorSecurityGroup
+  AvailabilityZone:
+    Value: !Ref LocalZone
+  MonthlyBaselineUSD:
+    Description: Approximate 730-hour baseline before data transfer or CPU credits.
+    Value: "40.85 (t3.medium 36.43 + 8 GB gp3 0.77 + one public IPv4 3.65)"

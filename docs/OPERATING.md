@@ -30,6 +30,10 @@ networking.
 Pointing a device at the concentrator you deploy here is a separate procedure:
 see [`DEVICE-SETUP.md`](DEVICE-SETUP.md).
 
+For the isolated Los Angeles AWS Local Zone stack, including its public
+ingress, cost, verification, and teardown, see
+[`AWS-LOCAL-ZONE.md`](AWS-LOCAL-ZONE.md).
+
 ## Deploy
 
 `deploy/icgd-deploy.sh` builds locally, uploads, and installs over ssh. It
