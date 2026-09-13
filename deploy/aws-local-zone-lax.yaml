@@ -2,8 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   Isolated AWS Local Zone deployment for the ZTE ICG concentrator in Los
   Angeles. Creates one VPC, internet gateway, Local Zone subnet, EC2 instance,
-  active BYOIP Elastic IP, retained rollback Elastic IP, security group, and
-  SSM instance role.
+  standard Elastic IP, security group, and SSM instance role.
 
 Parameters:
   SourceCommit:
@@ -28,9 +27,10 @@ Parameters:
       - t3.2xlarge
     Description: Burstable x86 instance types offered in both Los Angeles Local Zones.
   AmiId:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
-    Description: Amazon Linux 2023 x86_64 AMI resolved in us-west-2.
+    Type: AWS::EC2::Image::Id
+    Description: >-
+      Explicit Amazon Linux 2023 x86_64 AMI in us-west-2. Preserve the current
+      image for networking updates; change it only for an intentional instance replacement.
   LocalZone:
     Type: String
     Default: us-west-2-lax-1a
@@ -201,21 +201,7 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       Domain: vpc
-      NetworkBorderGroup: us-west-2-lax-1
-      Tags:
-        - Key: Name
-          Value: zte-concentrator-lax
-        - Key: Project
-          Value: zte-concentrator
-
-  ConcentratorByoipElasticIp:
-    Type: AWS::EC2::EIP
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Domain: vpc
       InstanceId: !Ref ConcentratorInstance
-      IpamPoolId: ipam-pool-0fc5e500657ae31b5
       NetworkBorderGroup: us-west-2-lax-1
       Tags:
         - Key: Name
@@ -225,7 +211,7 @@ Resources:
 
   ConcentratorDeployment:
     Type: AWS::SSM::Association
-    DependsOn: ConcentratorByoipElasticIp
+    DependsOn: ConcentratorElasticIp
     Properties:
       AssociationName: zte-concentrator-lax-deploy
       Name: AWS-RunShellScript
@@ -283,12 +269,8 @@ Outputs:
   InstanceId:
     Value: !Ref ConcentratorInstance
   PublicIp:
-    Value: !Ref ConcentratorByoipElasticIp
-  PublicIpAllocationId:
-    Value: !GetAtt ConcentratorByoipElasticIp.AllocationId
-  RollbackPublicIp:
     Value: !Ref ConcentratorElasticIp
-  RollbackPublicIpAllocationId:
+  PublicIpAllocationId:
     Value: !GetAtt ConcentratorElasticIp.AllocationId
   VpcId:
     Value: !Ref Vpc
