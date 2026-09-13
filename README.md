@@ -124,6 +124,11 @@ Deploy it to a server, and point a device at it:
 make deploy HOST=ubuntu@1.2.3.4 ARGS="--devices 02:00:5e:10:00:01"
 ```
 
+An isolated AWS Local Zone deployment for Los Angeles is also provided at
+[`deploy/aws-local-zone-lax.yaml`](deploy/aws-local-zone-lax.yaml). Read
+[`docs/AWS-LOCAL-ZONE.md`](docs/AWS-LOCAL-ZONE.md) for the network, cost,
+Graviton-availability, verification, and teardown details.
+
 Then read [`docs/OPERATING.md`](docs/OPERATING.md) — **before** you touch the
 device, because getting it wrong cuts the device's LAN off by design.
 
